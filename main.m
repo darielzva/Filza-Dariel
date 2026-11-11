@@ -1097,7 +1097,7 @@ static NSString *wq_temp_work_dir(NSString *prefix)
 {
     BOOL on = wq_show_hidden_apps();
     _hiddenAppsItem.image = [UIImage systemImageNamed:on ? @"eye.fill" : @"eye.slash"];
-    _hiddenAppsItem.style = on ? UIBarButtonItemStyleDone : UIBarButtonItemStylePlain;
+    _hiddenAppsItem.style = on ? wq_primary_button_style() : UIBarButtonItemStylePlain;
     _hiddenAppsItem.accessibilityLabel = WQLocalized(on ? @"Show Only Apps" : @"Show Hidden Apps");
 }
 
@@ -2958,7 +2958,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     if (hit) return hit;
     const CGFloat side = 30;
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
-    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
         [color setFill];
         [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, side, side) cornerRadius:7] fill];
         UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold];
