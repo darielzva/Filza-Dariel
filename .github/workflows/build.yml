@@ -1,0 +1,16 @@
+name: Build IPA
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          chmod +x build.sh tests/*.sh
+          WQ_SKIP_PREFLIGHT=1 ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WQFiles-ipa
+          path: WQFiles.ipa
