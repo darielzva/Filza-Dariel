@@ -63,5 +63,12 @@ UIImage *wq_telegram_icon(CGFloat side);
 @end
 @interface WQAboutViewController : UITableViewController
 @end
+// Patches: a folder with patch.json + files; Apply copies them into an app's data.
+@interface WQPatchesViewController : UITableViewController
+@end
+
+// Returns the data container path for the given bundle ID, or nil if not found.
+// Blocking — call off the main thread.
+NSString *_Nullable wq_data_container_for_bundle(NSString *bundleID);
 
 NS_ASSUME_NONNULL_END

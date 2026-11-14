@@ -7,7 +7,9 @@
 #import "WQUI.h"
 #import "WQAccess.h"
 #import "WQLaunchServices.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <fcntl.h>
+#import <sys/stat.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 
@@ -741,6 +743,374 @@ UIImage *wq_telegram_icon(CGFloat side)
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     NSString *url = _sections[(NSUInteger)indexPath.section][@"rows"][(NSUInteger)indexPath.row][@"url"];
     if (url) [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
+}
+
+@end
+
+
+#pragma mark - Patches
+
+// A patch is a folder in DM FILES' Documents/Patches (visible in the Files app):
+//   patch.json  {"name": "...", "bundleID": "com.example.app",
+//                "files": [{"source": "file.bin", "target": "Documents/path/file.bin"}]}
+//   file.bin    the files named as "source"
+// Apply copies each file into the app's data folder at "target"; what was
+// there is saved first (in the patch folder and in Backups) so Restore
+// Original puts it back.
+
+static NSString *wq_patches_root(void)
+{
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *dir = [docs stringByAppendingPathComponent:@"Patches"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+static BOOL wq_patch_rel_ok(id value)
+{
+    if (![value isKindOfClass:NSString.class]) return NO;
+    NSString *rel = value;
+    if (!rel.length || [rel hasPrefix:@"/"]) return NO;
+    for (NSString *part in [rel componentsSeparatedByString:@"/"])
+        if (!part.length || [part isEqualToString:@"."] || [part isEqualToString:@".."]) return NO;
+    return YES;
+}
+
+static NSDictionary *wq_patch_read(NSString *folder, NSString **errorText)
+{
+    NSString *problem = nil;
+    NSData *data = [NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:@"patch.json"]];
+    id json = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    NSDictionary *dict = [json isKindOfClass:NSDictionary.class] ? json : nil;
+    NSString *bid = [dict[@"bundleID"] isKindOfClass:NSString.class] ? dict[@"bundleID"] : nil;
+    NSArray *files = [dict[@"files"] isKindOfClass:NSArray.class] ? dict[@"files"] : nil;
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_"];
+    NSMutableArray<NSDictionary *> *clean = [NSMutableArray new];
+    if (!data) problem = @"patch.json is missing.";
+    else if (!dict) problem = @"patch.json isn't valid JSON.";
+    else if (!bid.length || ![bid containsString:@"."] || [bid rangeOfCharacterFromSet:allowed.invertedSet].location != NSNotFound)
+        problem = @"patch.json needs a valid \"bundleID\".";
+    else if (!files.count) problem = @"patch.json needs a \"files\" list.";
+    else {
+        for (id entry in files) {
+            NSString *source = [entry isKindOfClass:NSDictionary.class] ? entry[@"source"] : nil;
+            NSString *target = [entry isKindOfClass:NSDictionary.class] ? entry[@"target"] : nil;
+            if (!wq_patch_rel_ok(source) || !wq_patch_rel_ok(target)) { problem = @"Every file needs a relative \"source\" and \"target\" (no \"..\")."; break; }
+            if (!([target hasPrefix:@"Documents/"] || [target hasPrefix:@"Library/"] || [target hasPrefix:@"tmp/"])) {
+                problem = [NSString stringWithFormat:@"The target %@ must start with Documents/, Library/ or tmp/.", target]; break;
+            }
+            BOOL isDir = NO;
+            if (![NSFileManager.defaultManager fileExistsAtPath:[folder stringByAppendingPathComponent:source] isDirectory:&isDir] || isDir) {
+                problem = [NSString stringWithFormat:@"The file %@ is missing from the patch folder.", source]; break;
+            }
+            [clean addObject:@{@"source": source, @"target": target}];
+        }
+    }
+    if (problem) { if (errorText) *errorText = problem; return nil; }
+    NSString *name = [dict[@"name"] isKindOfClass:NSString.class] && [dict[@"name"] length] ? dict[@"name"] : folder.lastPathComponent;
+    return @{@"folder": folder, @"name": name, @"bundleID": bid, @"files": clean};
+}
+
+static NSMutableDictionary *wq_patch_state(NSString *folder)
+{
+    NSData *data = [NSData dataWithContentsOfFile:[folder stringByAppendingPathComponent:@"state.json"]];
+    id json = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    NSMutableDictionary *state = [json isKindOfClass:NSMutableDictionary.class] ? json : [NSMutableDictionary new];
+    if (![state[@"entries"] isKindOfClass:NSMutableDictionary.class]) state[@"entries"] = [NSMutableDictionary new];
+    return state;
+}
+
+static void wq_patch_save_state(NSString *folder, NSDictionary *state)
+{
+    NSData *data = [NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingPrettyPrinted error:nil];
+    [data writeToFile:[folder stringByAppendingPathComponent:@"state.json"] atomically:YES];
+}
+
+// The app's data folder, found like the Apps screen does. Blocking: call off the main thread.
+NSString *wq_data_container_for_bundle(NSString *bundleID)
+{
+    NSArray<NSString *> *containers = wq_enumerate(@"/private/var/mobile/Containers/Data/Application", 0, nil, nil);
+    for (NSString *c in containers) {
+        NSString *label = wq_container_label(c);
+        if (!label.length) label = wq_bundle_id_for_container(c);
+        if ([label isEqualToString:bundleID]) return c;
+    }
+    return nil;
+}
+
+// Creates the missing folders above dst, inside the container.
+static BOOL wq_patch_make_parents(NSString *container, NSString *dst, NSString **errorText)
+{
+    NSMutableArray<NSString *> *missing = [NSMutableArray new];
+    NSString *parent = dst.stringByDeletingLastPathComponent;
+    struct stat st;
+    while (parent.length > container.length && !wq_stat(parent, &st)) {
+        [missing insertObject:parent atIndex:0];
+        parent = parent.stringByDeletingLastPathComponent;
+    }
+    for (NSString *dir in missing) {
+        NSString *error = nil;
+        if (!wq_create_dir(dir, &error)) { if (errorText) *errorText = error ?: @"Couldn't create a folder."; return NO; }
+    }
+    return YES;
+}
+
+static NSString *wq_patch_apply(NSDictionary *patch)
+{
+    NSString *bid = patch[@"bundleID"], *folder = patch[@"folder"];
+    NSString *container = wq_data_container_for_bundle(bid);
+    if (!container) return [NSString stringWithFormat:@"%@ isn't installed, or its data folder can't be found.", bid];
+    wq_grant(container);
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableDictionary *state = wq_patch_state(folder);
+    NSMutableDictionary *entries = state[@"entries"];
+    NSString *originals = [folder stringByAppendingPathComponent:@".originals"];
+    NSArray<NSDictionary *> *files = patch[@"files"];
+    for (NSUInteger i = 0; i < files.count; i++) {
+        NSString *target = files[i][@"target"];
+        NSString *source = [folder stringByAppendingPathComponent:files[i][@"source"]];
+        NSString *dst = [container stringByAppendingPathComponent:target];
+        struct stat st;
+        BOOL present = wq_stat(dst, &st);
+        if (present && !S_ISREG(st.st_mode)) return [NSString stringWithFormat:@"%@ isn't a regular file.", target];
+        NSString *error = nil;
+        if (!entries[target]) {   // first time: keep what is there now
+            if (present) {
+                [fm createDirectoryAtPath:originals withIntermediateDirectories:YES attributes:nil error:nil];
+                NSString *saved = [originals stringByAppendingPathComponent:[NSString stringWithFormat:@"%lu", (unsigned long)i]];
+                [fm removeItemAtPath:saved error:nil];
+                if (!wq_copy_to_local(dst, saved, &error))
+                    return error ?: [NSString stringWithFormat:@"Couldn't save the original of %@.", target];
+            }
+            entries[target] = @{@"existed": @(present), @"index": @(i)};
+            wq_patch_save_state(folder, state);
+        }
+        if (present) {
+            if (!wq_write_from_file_with_backup(dst, source, NULL, &error))
+                return error ?: [NSString stringWithFormat:@"Couldn't write %@.", target];
+        } else {
+            if (!wq_patch_make_parents(container, dst, &error)) return error;
+            if (!wq_create_file_from(dst, source, &error))
+                return error ?: [NSString stringWithFormat:@"Couldn't create %@.", target];
+        }
+    }
+    state[@"applied"] = @YES;
+    wq_patch_save_state(folder, state);
+    return nil;
+}
+
+static NSString *wq_patch_restore(NSDictionary *patch)
+{
+    NSString *bid = patch[@"bundleID"], *folder = patch[@"folder"];
+    NSString *container = wq_data_container_for_bundle(bid);
+    if (!container) return [NSString stringWithFormat:@"%@ isn't installed, or its data folder can't be found.", bid];
+    wq_grant(container);
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSDictionary *entries = wq_patch_state(folder)[@"entries"];
+    NSString *originals = [folder stringByAppendingPathComponent:@".originals"];
+    for (NSString *target in entries) {
+        NSDictionary *entry = entries[target];
+        NSString *dst = [container stringByAppendingPathComponent:target];
+        struct stat st;
+        BOOL present = wq_stat(dst, &st);
+        NSString *error = nil;
+        if ([entry[@"existed"] boolValue]) {
+            NSString *saved = [originals stringByAppendingPathComponent:[NSString stringWithFormat:@"%@", entry[@"index"]]];
+            if (![fm fileExistsAtPath:saved]) return [NSString stringWithFormat:@"The saved original of %@ is missing.", target];
+            if (present) {
+                if (!wq_write_from_file(dst, saved, &error)) return error ?: [NSString stringWithFormat:@"Couldn't restore %@.", target];
+            } else {
+                if (!wq_patch_make_parents(container, dst, &error)) return error;
+                if (!wq_create_file_from(dst, saved, &error)) return error ?: [NSString stringWithFormat:@"Couldn't restore %@.", target];
+            }
+        } else if (present) {
+            if (!wq_delete(dst, &error)) return error ?: [NSString stringWithFormat:@"Couldn't remove %@.", target];
+        }
+    }
+    [fm removeItemAtPath:[folder stringByAppendingPathComponent:@"state.json"] error:nil];
+    [fm removeItemAtPath:originals error:nil];
+    return nil;
+}
+
+@interface WQPatchesViewController () <UIDocumentPickerDelegate>
+@end
+
+@implementation WQPatchesViewController {
+    NSArray<NSDictionary *> *_patches;   // folder, name, bundleID, files, applied  |  folder, name, error
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = WQLocalized(@"Patches");
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    __weak typeof(self) weakSelf = self;
+    UIAction *importAction = [UIAction actionWithTitle:WQLocalized(@"Import Patch Folder…") image:[UIImage systemImageNamed:@"folder.badge.plus"]
+                                      identifier:nil handler:^(UIAction *__unused a) { [weakSelf importFolder]; }];
+    UIAction *templateAction = [UIAction actionWithTitle:WQLocalized(@"New Patch Template") image:[UIImage systemImageNamed:@"doc.badge.plus"]
+                                        identifier:nil handler:^(UIAction *__unused a) { [weakSelf newTemplate]; }];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
+                                                                                menu:[UIMenu menuWithChildren:@[importAction, templateAction]]];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    wq_style_table(self.tableView);
+    [self reload];
+}
+
+- (void)reload
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = wq_patches_root();
+    NSArray<NSString *> *names = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray new];
+    for (NSString *name in names) {
+        if ([name hasPrefix:@"."]) continue;
+        NSString *folder = [dir stringByAppendingPathComponent:name];
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:folder isDirectory:&isDir] || !isDir) continue;
+        NSString *error = nil;
+        NSDictionary *patch = wq_patch_read(folder, &error);
+        if (patch) {
+            NSMutableDictionary *item = [patch mutableCopy];
+            item[@"applied"] = @([wq_patch_state(folder)[@"applied"] boolValue]);
+            [items addObject:item];
+        } else {
+            [items addObject:@{@"folder": folder, @"name": name, @"error": error ?: @"Invalid patch."}];
+        }
+    }
+    _patches = items;
+    [self.tableView reloadData];
+}
+
+- (void)importFolder
+{
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)__unused controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+    NSURL *url = urls.firstObject;
+    if (!url) return;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = wq_patches_root();
+    NSString *name = url.lastPathComponent, *dest = [dir stringByAppendingPathComponent:name];
+    for (NSUInteger n = 2; [fm fileExistsAtPath:dest]; n++) {
+        name = [NSString stringWithFormat:@"%@ %lu", url.lastPathComponent, (unsigned long)n];
+        dest = [dir stringByAppendingPathComponent:name];
+    }
+    BOOL scoped = [url startAccessingSecurityScopedResource];
+    NSError *copyError = nil;
+    BOOL copied = [fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:&copyError];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+    if (!copied) { wq_alert(self, @"Patch failed", copyError.localizedDescription); return; }
+    NSString *error = nil;
+    if (!wq_patch_read(dest, &error)) {
+        [fm removeItemAtPath:dest error:nil];
+        wq_alert(self, @"Patch failed", error);
+        return;
+    }
+    [self reload];
+}
+
+- (void)newTemplate
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *dir = wq_patches_root(), *name = @"New Patch";
+    for (NSUInteger n = 2; [fm fileExistsAtPath:[dir stringByAppendingPathComponent:name]]; n++)
+        name = [NSString stringWithFormat:@"New Patch %lu", (unsigned long)n];
+    NSString *folder = [dir stringByAppendingPathComponent:name];
+    [fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+    NSDictionary *template = @{@"name": name, @"bundleID": @"com.example.app",
+        @"files": @[@{@"source": @"file.bin", @"target": @"Documents/path/inside/the/app/file.bin"}]};
+    NSData *data = [NSJSONSerialization dataWithJSONObject:template
+                                                   options:NSJSONWritingPrettyPrinted | NSJSONWritingWithoutEscapingSlashes error:nil];
+    [data writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES];
+    [self reload];
+    wq_alert(self, @"Template created", WQLocalizedFormat(@"Open Files → DM FILES → Patches → %@, edit patch.json and add your files to that folder.", name));
+}
+
+- (void)run:(BOOL)restore patch:(NSDictionary *)patch
+{
+    UIAlertController *busy = wq_alert_controller(WQLocalized(restore ? @"Restore Original" : @"Apply Patch"), @"…", UIAlertControllerStyleAlert);
+    [self presentViewController:busy animated:YES completion:nil];
+    dispatch_async(wq_io(), ^{
+        NSString *error = restore ? wq_patch_restore(patch) : wq_patch_apply(patch);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [busy dismissViewControllerAnimated:YES completion:^{
+                if (error) wq_alert(self, @"Patch failed", error);
+                else wq_alert(self, restore ? @"Original restored" : @"Patch applied", nil);
+                [self reload];
+            }];
+        });
+    });
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 1; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return (NSInteger)_patches.count; }
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
+{
+    return _patches.count ? nil : WQLocalized(@"No patches yet. Put a folder with a patch.json and the files to copy in Files → DM FILES → Patches, or tap + to import one.");
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    NSDictionary *patch = _patches[(NSUInteger)indexPath.row];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    wq_style_cell(cell);
+    UIListContentConfiguration *c = [UIListContentConfiguration subtitleCellConfiguration];
+    c.text = patch[@"name"];
+    c.image = [UIImage systemImageNamed:patch[@"error"] ? @"exclamationmark.triangle.fill" : @"bandage.fill"];
+    if (patch[@"error"]) {
+        c.secondaryText = patch[@"error"];
+        c.secondaryTextProperties.color = UIColor.systemRedColor;
+    } else {
+        c.secondaryText = WQLocalizedFormat(@"%lu files · %@", (unsigned long)[patch[@"files"] count], patch[@"bundleID"]);
+    }
+    cell.contentConfiguration = c;
+    if ([patch[@"applied"] boolValue]) {
+        UIImageView *badge = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark.circle.fill"]];
+        badge.tintColor = UIColor.systemGreenColor;
+        badge.accessibilityLabel = WQLocalized(@"Applied");
+        [badge sizeToFit];
+        cell.accessoryView = badge;
+    }
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSDictionary *patch = _patches[(NSUInteger)indexPath.row];
+    BOOL applied = [patch[@"applied"] boolValue];
+    UIAlertController *sheet = wq_alert_controller(patch[@"name"], patch[@"error"] ?: patch[@"bundleID"], UIAlertControllerStyleActionSheet);
+    __weak typeof(self) weakSelf = self;
+    if (!patch[@"error"]) {
+        [sheet addAction:wq_alert_action(WQLocalized(@"Apply Patch"), UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+            [weakSelf run:NO patch:patch];
+        })];
+        if (applied)
+            [sheet addAction:wq_alert_action(WQLocalized(@"Restore Original"), UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+                [weakSelf run:YES patch:patch];
+            })];
+    }
+    if (!applied && wq_deleting_allowed())
+        [sheet addAction:wq_alert_action(WQLocalized(@"Delete Patch"), UIAlertActionStyleDestructive, ^(UIAlertAction *__unused a) {
+            [NSFileManager.defaultManager removeItemAtPath:patch[@"folder"] error:nil];
+            [weakSelf reload];
+        })];
+    [sheet addAction:wq_alert_action(WQLocalized(@"Cancel"), UIAlertActionStyleCancel, nil)];
+    sheet.popoverPresentationController.sourceView = [tableView cellForRowAtIndexPath:indexPath];
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 @end

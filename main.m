@@ -2053,6 +2053,22 @@ static NSString *wq_temp_work_dir(NSString *prefix)
                 UITableViewCell *cell = [weakSelf.tableView cellForRowAtIndexPath:indexPath];
                 if (latest && weakSelf) wq_share(weakSelf, latest.path, cell);
             }]];
+            [actions addObject:[UIAction actionWithTitle:WQLocalizedNullable(@"Copy to App…") image:[UIImage systemImageNamed:@"arrow.right.circle"]
+                                              identifier:nil handler:^(UIAction *__unused a) {
+                WQItem *latest = currentItem();
+                WQDirViewController *strongSelf = weakSelf;
+                if (!latest || !strongSelf) return;
+                [strongSelf promptCopyToApp:latest.path];
+            }]];
+            if (wq_cta_records_for_source(current.path).count) {
+                [actions addObject:[UIAction actionWithTitle:WQLocalizedNullable(@"Restore in App…") image:[UIImage systemImageNamed:@"arrow.uturn.left.circle"]
+                                                  identifier:nil handler:^(UIAction *__unused a) {
+                    WQItem *latest = currentItem();
+                    WQDirViewController *strongSelf = weakSelf;
+                    if (!latest || !strongSelf) return;
+                    [strongSelf promptRestoreFromApp:latest.path];
+                }]];
+            }
             NSString *original = wq_backup_original_path(current.path);
             if (original) {
                 [actions addObject:[UIAction actionWithTitle:WQLocalizedNullable(@"Restore to Original Location")
@@ -2170,6 +2186,240 @@ static NSString *wq_temp_work_dir(NSString *prefix)
         [self runIO:^BOOL(NSString **error) { return wq_create_dir(path, error); } failure:WQLocalizedNullable(@"Cannot create folder")];
     })];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+// ---- Copy to App / Restore in App state -----------------------------------
+// Records are stored in <WQ Files Documents>/CopyToAppState.json as a dict:
+//   { "<sourcePath>": [ { "bundleID", "target", "backupUnit", "originalExisted", "date" }, … ] }
+// backupUnit is the backup-stamp folder path (Backups/<stamp>/) or "" when
+// the target didn't exist before the copy (restore = delete).
+
+static NSString *wq_cta_state_path(void)
+{
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    return [docs stringByAppendingPathComponent:@"CopyToAppState.json"];
+}
+
+static NSMutableDictionary *wq_cta_load(void)
+{
+    NSData *data = [NSData dataWithContentsOfFile:wq_cta_state_path()];
+    id json = data ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    return [json isKindOfClass:NSMutableDictionary.class] ? json : [NSMutableDictionary new];
+}
+
+static void wq_cta_save(NSDictionary *state)
+{
+    NSData *data = [NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingPrettyPrinted error:nil];
+    [data writeToFile:wq_cta_state_path() atomically:YES];
+}
+
+// Returns the array of records for a given source path (may be empty).
+static NSArray<NSDictionary *> *wq_cta_records_for_source(NSString *sourcePath)
+{
+    NSMutableDictionary *state = wq_cta_load();
+    id list = state[sourcePath];
+    return [list isKindOfClass:NSArray.class] ? list : @[];
+}
+
+static void wq_cta_add_record(NSString *sourcePath, NSString *bundleID, NSString *target,
+                               NSString *backupUnit, BOOL originalExisted)
+{
+    NSMutableDictionary *state = wq_cta_load();
+    NSMutableArray *list = [state[sourcePath] isKindOfClass:NSArray.class]
+        ? [state[sourcePath] mutableCopy] : [NSMutableArray new];
+    // Replace any existing record for the same (bundleID, target) pair so we
+    // always keep the most-recent backup, not stacked ones.
+    [list filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *r, id __unused b) {
+        return !([r[@"bundleID"] isEqualToString:bundleID] && [r[@"target"] isEqualToString:target]);
+    }]];
+    [list addObject:@{
+        @"bundleID": bundleID,
+        @"target": target,
+        @"backupUnit": backupUnit ?: @"",
+        @"originalExisted": @(originalExisted),
+        @"date": [NSDate.date description]
+    }];
+    state[sourcePath] = list;
+    wq_cta_save(state);
+}
+
+static void wq_cta_remove_record(NSString *sourcePath, NSString *bundleID, NSString *target)
+{
+    NSMutableDictionary *state = wq_cta_load();
+    NSMutableArray *list = [state[sourcePath] isKindOfClass:NSArray.class]
+        ? [state[sourcePath] mutableCopy] : [NSMutableArray new];
+    [list filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *r, id __unused b) {
+        return !([r[@"bundleID"] isEqualToString:bundleID] && [r[@"target"] isEqualToString:target]);
+    }]];
+    if (list.count) state[sourcePath] = list;
+    else [state removeObjectForKey:sourcePath];
+    wq_cta_save(state);
+}
+
+// ---- Methods ---------------------------------------------------------------
+
+// Copies a local file into another app's data container at a user-specified
+// path. The original is backed up first so "Restore in App…" can undo it.
+// Uses wq_grant + worse_query — works on iOS 27.
+- (void)promptCopyToApp:(NSString *)sourcePath
+{
+    NSString *defaultTarget = [NSString stringWithFormat:@"Documents/%@", sourcePath.lastPathComponent];
+    UIAlertController *alert = wq_alert_controller(@"Copy to App", nil, UIAlertControllerStyleAlert);
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *f) {
+        f.placeholder = @"Bundle ID (e.g. com.dts.freefireth)";
+        f.keyboardType = UIKeyboardTypeURL;
+        f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        f.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *f) {
+        f.text = defaultTarget;
+        f.placeholder = @"Target path (e.g. Documents/contentcache/…/file)";
+        f.keyboardType = UIKeyboardTypeURL;
+        f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        f.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addAction:wq_alert_action(@"Cancel", UIAlertActionStyleCancel, nil)];
+    UIAlertAction *apply = wq_alert_action(@"Apply", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        NSString *bundleID = [alert.textFields[0].text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        NSString *target   = [alert.textFields[1].text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (!bundleID.length || !target.length) {
+            wq_alert(self, @"Copy to App", WQLocalized(@"Bundle ID and target path are required."));
+            return;
+        }
+        if (!([target hasPrefix:@"Documents/"] || [target hasPrefix:@"Library/"] || [target hasPrefix:@"tmp/"])) {
+            wq_alert(self, @"Copy to App",
+                     WQLocalizedFormat(@"The target path must start with Documents/, Library/ or tmp/.\n\nGot: %@", target));
+            return;
+        }
+        NSString *src = [sourcePath copy];
+        UIAlertController *busy = wq_alert_controller(@"Copy to App", @"…", UIAlertControllerStyleAlert);
+        [self presentViewController:busy animated:YES completion:nil];
+        dispatch_async(wq_io(), ^{
+            NSString *container = wq_data_container_for_bundle(bundleID);
+            NSString *result = nil;
+            NSString *backupUnit = nil;
+            BOOL originalExisted = NO;
+            if (!container) {
+                result = [NSString stringWithFormat:@"%@ isn't installed, or its data folder can't be found.", bundleID];
+            } else {
+                wq_grant(container);
+                NSString *dst = [container stringByAppendingPathComponent:target];
+                NSMutableArray<NSString *> *missing = [NSMutableArray new];
+                NSString *parent = dst.stringByDeletingLastPathComponent;
+                struct stat st;
+                while (parent.length > container.length && !wq_stat(parent, &st)) {
+                    [missing insertObject:parent atIndex:0];
+                    parent = parent.stringByDeletingLastPathComponent;
+                }
+                for (NSString *dir in missing) {
+                    NSString *mkErr = nil;
+                    if (!wq_create_dir(dir, &mkErr)) { result = mkErr ?: @"Couldn't create a folder."; break; }
+                }
+                if (!result) {
+                    NSString *copyErr = nil;
+                    originalExisted = wq_stat(dst, &st);
+                    if (originalExisted) {
+                        if (!wq_write_from_file_with_backup(dst, src, &backupUnit, &copyErr))
+                            result = copyErr ?: [NSString stringWithFormat:@"Couldn't overwrite %@.", target];
+                    } else {
+                        if (!wq_create_file_from(dst, src, &copyErr))
+                            result = copyErr ?: [NSString stringWithFormat:@"Couldn't create %@.", target];
+                    }
+                    if (!result) wq_cta_add_record(src, bundleID, target, backupUnit, originalExisted);
+                }
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [busy dismissViewControllerAnimated:NO completion:^{
+                    if (result) wq_alert(self, @"Copy to App failed", result);
+                    else        wq_alert(self, @"Copied", WQLocalizedFormat(@"→ %@/%@", bundleID, target));
+                }];
+            });
+        });
+    });
+    [alert addAction:apply];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Shows every recorded "Copy to App" operation for this file and lets the
+// user pick which one to undo (restore the original file in the app).
+- (void)promptRestoreFromApp:(NSString *)sourcePath
+{
+    NSArray<NSDictionary *> *records = wq_cta_records_for_source(sourcePath);
+    if (!records.count) {
+        wq_alert(self, @"Restore in App", WQLocalized(@"No restore point found for this file."));
+        return;
+    }
+    UIAlertController *sheet = wq_alert_controller(@"Restore in App",
+        WQLocalized(@"Choose which app to restore the original file in."),
+        UIAlertControllerStyleActionSheet);
+    __weak typeof(self) weakSelf = self;
+    for (NSDictionary *rec in records) {
+        NSString *bundleID  = rec[@"bundleID"];
+        NSString *target    = rec[@"target"];
+        NSString *backupUnit = rec[@"backupUnit"];
+        BOOL originalExisted = [rec[@"originalExisted"] boolValue];
+        NSString *title = [NSString stringWithFormat:@"%@ → %@", bundleID, target];
+        [sheet addAction:wq_alert_action(title, UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+            NSString *src = [sourcePath copy];
+            UIAlertController *busy = wq_alert_controller(@"Restore in App", @"…", UIAlertControllerStyleAlert);
+            [weakSelf presentViewController:busy animated:YES completion:nil];
+            dispatch_async(wq_io(), ^{
+                NSString *container = wq_data_container_for_bundle(bundleID);
+                NSString *result = nil;
+                if (!container) {
+                    result = [NSString stringWithFormat:@"%@ isn't installed, or its data folder can't be found.", bundleID];
+                } else {
+                    wq_grant(container);
+                    NSString *dst = [container stringByAppendingPathComponent:target];
+                    NSString *restoreErr = nil;
+                    if (!originalExisted) {
+                        // File didn't exist before — delete what we placed.
+                        struct stat st;
+                        if (wq_stat(dst, &st)) {
+                            if (!wq_delete(dst, &restoreErr))
+                                result = restoreErr ?: [NSString stringWithFormat:@"Couldn't remove %@.", target];
+                        }
+                        // Already gone — that's fine.
+                    } else if (backupUnit.length) {
+                        // Restore from the backup stamp folder.
+                        NSString *savedFile = [backupUnit stringByAppendingPathComponent:dst.lastPathComponent];
+                        struct stat st;
+                        BOOL dstPresent = wq_stat(dst, &st);
+                        if (dstPresent) {
+                            if (!wq_write_from_file(dst, savedFile, &restoreErr))
+                                result = restoreErr ?: [NSString stringWithFormat:@"Couldn't restore %@.", target];
+                        } else {
+                            // Create parent folders if needed then recreate the file.
+                            NSMutableArray<NSString *> *missing = [NSMutableArray new];
+                            NSString *parent = dst.stringByDeletingLastPathComponent;
+                            while (parent.length > container.length && !wq_stat(parent, &st)) {
+                                [missing insertObject:parent atIndex:0];
+                                parent = parent.stringByDeletingLastPathComponent;
+                            }
+                            for (NSString *dir in missing) {
+                                NSString *mkErr = nil;
+                                if (!wq_create_dir(dir, &mkErr)) { result = mkErr ?: @"Couldn't create a folder."; break; }
+                            }
+                            if (!result && !wq_create_file_from(dst, savedFile, &restoreErr))
+                                result = restoreErr ?: [NSString stringWithFormat:@"Couldn't restore %@.", target];
+                        }
+                    } else {
+                        result = @"No backup unit path recorded — cannot restore.";
+                    }
+                    if (!result) wq_cta_remove_record(src, bundleID, target);
+                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [busy dismissViewControllerAnimated:NO completion:^{
+                        if (result) wq_alert(weakSelf, @"Restore failed", result);
+                        else        wq_alert(weakSelf, @"Restored", WQLocalizedFormat(@"Original file is back in %@/%@", bundleID, target));
+                    }];
+                });
+            });
+        })];
+    }
+    [sheet addAction:wq_alert_action(@"Cancel", UIAlertActionStyleCancel, nil)];
+    sheet.popoverPresentationController.sourceView = self.view;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)promptRename:(WQItem *)item
@@ -3021,6 +3271,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     // Bundle containers open on some iOS versions only (found by the startup check).
     if (wq_app_bundles_reachable())
         [explore addObject:wq_row(@"bundles", @"App Bundles", @"app.badge.fill", UIColor.systemTealColor)];
+    [explore addObject:wq_row(@"patches", @"Patches", @"bandage.fill", UIColor.systemYellowColor)];
     [explore addObject:wq_row(@"goto", @"Go to Path…", @"arrow.right.circle.fill", UIColor.systemGrayColor)];
 
     NSArray *backups = @[
@@ -3364,6 +3615,8 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         next = [WQSystemGroupsViewController new];
     } else if ([rid isEqualToString:@"language"]) {
         next = [WQLanguageViewController new];
+    } else if ([rid isEqualToString:@"patches"]) {
+        next = [WQPatchesViewController new];
     } else if ([rid isEqualToString:@"appearance"]) {
         next = [WQAppearanceViewController new];
     } else if ([rid isEqualToString:@"about"]) {
