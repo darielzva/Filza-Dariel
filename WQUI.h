@@ -65,6 +65,18 @@ UIImage *wq_telegram_icon(CGFloat side);
 @end
 // Patches: a folder with patch.json + files; Apply copies them into an app's data.
 @interface WQPatchesViewController : UITableViewController
+// Push directly into the create-patch form with a pre-filled target path and bundle ID.
+// Used by WQDirViewController's "Crear parche en esta ruta" context menu action.
+- (instancetype)initWithPrefilledPath:(nullable NSString *)targetPath
+                             bundleID:(nullable NSString *)bundleID;
+@end
+
+// Implemented by WQDirViewController when launched as a patch route picker.
+// The selected file's relative path (Documents/…) and the container's bundle ID
+// are delivered back to whoever pushed the picker.
+@protocol WQPatchRoutePickerDelegate <NSObject>
+- (void)patchRoutePickerDidSelectPath:(NSString *)relativePath
+                             bundleID:(NSString *)bundleID;
 @end
 
 // Returns the data container path for the given bundle ID, or nil if not found.
