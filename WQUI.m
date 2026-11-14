@@ -952,6 +952,27 @@ typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
     WQPatchFormRowCount,
 };
 
+// Ready-made routes for the create-patch form: tapping one fills in the bundle
+// ID and the target path.
+static NSArray<NSDictionary *> *wq_patch_presets(void)
+{
+    static NSArray<NSDictionary *> *presets;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        presets = @[
+            @{@"title": @"SHADER FF NORMAL", @"symbol": @"cpu", @"bundleID": @"com.dts.freefireth",
+              @"path": @"Documents/contentcache/Optional/ios/gameassetbundles/shaders.P0K3UG2TfecMBhWMMV~2Fu8ReudIk~3D"},
+            @{@"title": @"AVATAR FF NORMAL", @"symbol": @"person.crop.square", @"bundleID": @"com.dts.freefireth",
+              @"path": @"Documents/contentcache/Compulsory/ios/gameassetbundles/avatar/assetindexer.U6Zffc4YIR3DslNj3cXvYGAqz58~3D"},
+            @{@"title": @"SHADER FF MAX", @"symbol": @"cpu", @"bundleID": @"com.dts.freefiremax",
+              @"path": @"Documents/contentcache/Optional/ios/gameassetbundles/shaders.eDjuzR1ocvtcFd~2BTzimtXF99jqU~3D"},
+            @{@"title": @"AVATAR FF MAX", @"symbol": @"person.crop.square", @"bundleID": @"com.dts.freefiremax",
+              @"path": @"Documents/contentcache/Compulsory/ios/gameassetbundles/avatar/assetindexer.YJ~2FW7EkU5pRkVg51NrKyx4LXid8~3D"},
+        ];
+    });
+    return presets;
+}
+
 @interface WQPatchFormViewController : UITableViewController
                                       <UIDocumentPickerDelegate,
                                        WQPatchRoutePickerDelegate>
@@ -1001,19 +1022,20 @@ typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
 
 // ---- Table structure ---------------------------------------------------
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 1; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }   // 0 = ready-made routes, 1 = the form
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s
 {
-    return (NSInteger)WQPatchFormRowCount;
+    return s == 0 ? (NSInteger)wq_patch_presets().count : (NSInteger)WQPatchFormRowCount;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s
 {
-    return nil;
+    return s == 0 ? @"Rutas predefinidas" : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)s
 {
+    if (s == 0) return nil;
     return @"La ruta destino debe empezar con Documents/, Library/ o tmp/. "
             "El archivo se copiará con el nombre del último componente de esa ruta.";
 }
@@ -1025,6 +1047,21 @@ typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
         [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     wq_style_cell(cell);
     UIListContentConfiguration *c = cell.defaultContentConfiguration;
+
+    if (indexPath.section == 0) {
+        NSDictionary *preset = wq_patch_presets()[(NSUInteger)indexPath.row];
+        UIListContentConfiguration *pc = [UIListContentConfiguration subtitleCellConfiguration];
+        pc.text = preset[@"title"];
+        pc.secondaryText = preset[@"bundleID"];
+        pc.image = [UIImage systemImageNamed:preset[@"symbol"]];
+        cell.contentConfiguration = pc;
+        // Checked while the form holds exactly this route.
+        NSString *bid  = _bundleIDField ? _bundleIDField.text : _prefilledBundleID;
+        NSString *path = _targetPathField ? _targetPathField.text : _prefilledTargetPath;
+        BOOL selected = [bid isEqualToString:preset[@"bundleID"]] && [path isEqualToString:preset[@"path"]];
+        cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        return cell;
+    }
 
     switch ((WQPatchFormRow)indexPath.row) {
 
@@ -1120,9 +1157,26 @@ typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tv deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0) {
+        [self applyPreset:wq_patch_presets()[(NSUInteger)indexPath.row]];
+        return;
+    }
     if ((WQPatchFormRow)indexPath.row == WQPatchFormRowFile) {
         [self pickFile];
     }
+}
+
+// Fills in the bundle ID and the target path of a ready-made route. The name
+// is suggested too, if still empty.
+- (void)applyPreset:(NSDictionary *)preset
+{
+    _prefilledBundleID = preset[@"bundleID"];
+    _prefilledTargetPath = preset[@"path"];
+    _bundleIDField.text = preset[@"bundleID"];
+    _targetPathField.text = preset[@"path"];
+    if (_nameField && !_nameField.text.length) _nameField.text = preset[@"title"];
+    [self.view endEditing:YES];
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 // ---- Helpers -----------------------------------------------------------
@@ -1181,7 +1235,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
     _pickedFileURL = urls.firstObject;
     [self.tableView reloadRowsAtIndexPaths:
-        @[[NSIndexPath indexPathForRow:(NSInteger)WQPatchFormRowFile inSection:0]]
+        @[[NSIndexPath indexPathForRow:(NSInteger)WQPatchFormRowFile inSection:1]]
                           withRowAnimation:UITableViewRowAnimationAutomatic];
 }
 
