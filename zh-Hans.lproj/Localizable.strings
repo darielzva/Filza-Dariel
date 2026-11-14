@@ -8,7 +8,7 @@
 "Not restored" = "未能还原";
 "Restore failed" = "还原失败";
 "Restore recovery" = "中断还原";
-"WQ Files" = "WQ Files";
+"DM FILES" = "DM FILES";
 "Containers" = "容器";
 "Tools" = "工具";
 "App Data" = "应用数据";
@@ -116,8 +116,8 @@
 "Only regular files can be viewed." = "只能查看普通文件。";
 "Only regular files can be shared." = "只能分享普通文件。";
 "Symbolic link" = "符号链接";
-"WQ Files does not follow symbolic links for viewing, sharing or editing." = "WQ Files 在查看、分享或编辑时不会跟随符号链接。";
-"WQ Files does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "WQ Files 在查看、分享或编辑时不会跟随符号链接。请使用“复制路径”显式打开目标。";
+"DM FILES does not follow symbolic links for viewing, sharing or editing." = "DM FILES 在查看、分享或编辑时不会跟随符号链接。";
+"DM FILES does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "DM FILES 在查看、分享或编辑时不会跟随符号链接。请使用“复制路径”显式打开目标。";
 "Symbolic links are not followed for viewing, sharing or editing." = "查看、分享或编辑时不会跟随符号链接。";
 "Delete backups?" = "删除备份？";
 "Delete backup?" = "删除备份？";
@@ -308,7 +308,7 @@
 "Not cleared" = "未清除";
 "The backup did not complete, so nothing was deleted." = "备份未完成，因此未删除任何内容。";
 "Clear Without Backup" = "不备份直接清除";
-"\n\nThis backup is unverified (%@). WQ Files will re-check its parts before changing anything." = "\n\n此备份未验证（%@）。WQ Files 会在更改任何内容前重新检查其各部分。";
+"\n\nThis backup is unverified (%@). DM FILES will re-check its parts before changing anything." = "\n\n此备份未验证（%@）。DM FILES 会在更改任何内容前重新检查其各部分。";
 "no typed manifest" = "没有类型化清单";
 "Replaces the app's current Documents and Library with the backup from %@; tmp is left untouched. The current data is backed up first, and put back if anything fails. Close the app first: a running app can make the operation non-snapshot-consistent.%@" = "将用来自 %@ 的备份替换 App 当前的 Documents 和 Library；临时文件（tmp）保持不变。当前数据会先备份，若任何步骤失败会还原。请先关闭此 App：运行中的 App 可能导致操作无法保持快照一致。%@";
 "Restoring %@…" = "正在还原 %@…";
@@ -532,9 +532,9 @@
 "Scan all files?" = "扫描所有文件？";
 "Not Now" = "暂不";
 "Start Scan" = "开始扫描";
-"To list %@, WQ Files has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep WQ Files open while it scans." = "要列出 %@，WQ Files 需要先检查此设备上的每个文件一次：%@ 个文件，%@。\n\n只有第一次需要这样做；后续扫描只检查新文件，只需几秒。\n\n扫描期间请保持 WQ Files 打开。";
+"To list %@, DM FILES has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep DM FILES open while it scans." = "要列出 %@，DM FILES 需要先检查此设备上的每个文件一次：%@ 个文件，%@。\n\n只有第一次需要这样做；后续扫描只检查新文件，只需几秒。\n\n扫描期间请保持 DM FILES 打开。";
 "Scanning all files" = "正在扫描文件";
-"iOS doesn't let WQ Files list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep WQ Files open. Switching to another app or locking the screen pauses the scan." = "iOS 不允许 WQ Files 直接列出这些文件夹，因此它需要先检查此设备上的每个文件一次。只有第一次较慢；后续扫描只检查新文件。\n\n请保持 WQ Files 打开。切换到其他 App 或锁屏会暂停扫描。";
+"iOS doesn't let DM FILES list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep DM FILES open. Switching to another app or locking the screen pauses the scan." = "iOS 不允许 DM FILES 直接列出这些文件夹，因此它需要先检查此设备上的每个文件一次。只有第一次较慢；后续扫描只检查新文件。\n\n请保持 DM FILES 打开。切换到其他 App 或锁屏会暂停扫描。";
 "Starting…" = "正在启动…";
 "Hide" = "隐藏";
 "Stop Scan" = "停止扫描";
@@ -547,7 +547,7 @@
 "the app folders" = "App 文件夹";
 "Signing problem: no App Group" = "签名问题：缺少应用组";
 "Signing Help" = "签名帮助";
-"WQ Files %@ (%@) by kolbicz" = "WQ Files %@（%@），作者 kolbicz";
+"DM FILES %@ (%@) by kolbicz" = "DM FILES %@（%@），作者 kolbicz";
 "SQLite Viewer" = "SQLite 查看器";
 "SQL" = "SQL";
 "Copy" = "复制";
@@ -631,7 +631,7 @@
 "Show" = "显示";
 "Copy Bundle ID" = "复制 Bundle ID";
 "%@ of data" = "%@ 数据";
-"WQ Files has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "WQ Files 没有应用组，因此无法打开其他应用的文件夹。请使用保留应用组的工具重新签名（见 README 的 Signing 部分）。";
+"DM FILES has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "DM FILES 没有应用组，因此无法打开其他应用的文件夹。请使用保留应用组的工具重新签名（见 README 的 Signing 部分）。";
 "Save in progress" = "正在保存";
 "Wait for the current save to finish before leaving or making more changes." = "请等待当前保存完成后再离开或继续修改。";
 "Discard changes?" = "放弃更改？";
@@ -651,7 +651,7 @@
 "Select Backups" = "选择备份";
 "Delete Backup…" = "删除备份…";
 "No App Group" = "缺少应用组";
-"WQ Files by kolbicz" = "WQ Files，作者 kolbicz";
+"DM FILES by kolbicz" = "DM FILES，作者 kolbicz";
 "Sandbox escape: worse_query by @forcequitOS" = "沙盒逃逸：worse_query，作者 @forcequitOS";
 "On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files." = "在 iOS 26 上无法访问系统数据和系统组（worse_query 仅在 iOS 27 上覆盖它们），而内部守护进程需要扫描每个文件 ID：在频繁使用的设备上，首次扫描可能耗时将近一小时；后续扫描只检查新文件。";
 "Overwritten and deleted files are copied to Backups first (also visible in the Files app). Long-press a backup to restore it." = "被覆盖或删除的文件会先复制到“备份”（也可在“文件”App 中查看）。长按备份可将其还原。";
@@ -665,7 +665,7 @@
 "the crash-log target is not the expected canonical directory" = "崩溃日志目标不是预期的标准目录";
 "the scanned cache targets are incomplete" = "扫描到的缓存目标不完整";
 "the app container identity or ancestry is unavailable" = "App 容器标识或祖先路径不可用";
-"WQ Files %@ (%@)\n%@\n\n%@" = "WQ Files %@（%@）\n%@\n\n%@";
+"DM FILES %@ (%@)\n%@\n\n%@" = "DM FILES %@（%@）\n%@\n\n%@";
 "0 KB" = "0 KB";
 "Discard" = "放弃";
 "%@ · %@ · no identifier" = "%@ · %@ · 无标识符";
@@ -681,7 +681,7 @@
 "change" = "修改";
 "read" = "读取";
 "open" = "打开";
-"This file belongs to %@ (mode %o) and only its owner may %@ it. WQ Files reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "此文件属于 %@（模式 %o），只有所有者才能对其执行“%@”操作。WQ Files 以 mobile 用户（uid %d）运行，因此任何应用都不能%@此文件。";
+"This file belongs to %@ (mode %o) and only its owner may %@ it. DM FILES reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "此文件属于 %@（模式 %o），只有所有者才能对其执行“%@”操作。DM FILES 以 mobile 用户（uid %d）运行，因此任何应用都不能%@此文件。";
 "The archive would be larger than 4 GB, which isn't supported yet." = "压缩包将大于 4 GB，暂不支持。";
 "Too many items for one ZIP (more than 65535)." = "单个 ZIP 的项目过多（超过 65535 个）。";
 "Can't read %@ (%s)" = "无法读取 %@（%s）";
@@ -712,8 +712,8 @@
 "An item named \"%@\" is already there" = "已存在名为“%@”的项目";
 "Items can't be moved to another volume" = "项目不能移动到其他卷";
 
-/* Plural forms and WQ Files 0.9 localization additions. */
-"%@ isn't installed, or WQ Files can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "未安装 %@，或 WQ Files 无法访问其数据。备份只能还原到已安装的 App：请先安装并打开一次，然后重试。";
+/* Plural forms and DM FILES 0.9 localization additions. */
+"%@ isn't installed, or DM FILES can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "未安装 %@，或 DM FILES 无法访问其数据。备份只能还原到已安装的 App：请先安装并打开一次，然后重试。";
 "%@ selected in %lu item" = "已选择 %@，共 %lu 个项目";
 "%@ selected in %lu items" = "已选择 %@，共 %lu 个项目";
 "%ld item" = "%ld 个项目";
@@ -748,8 +748,8 @@
 "There is no complete backup of %@ to restore." = "没有可还原的 %@ 完整备份。";
 "This permanently removes %lu complete backup and everything inside it. It cannot be undone." = "这会永久删除 %lu 个完整备份及其中的所有内容，且无法撤销。";
 "This permanently removes %lu complete backups and everything inside them. It cannot be undone." = "这会永久删除 %lu 个完整备份及其中的所有内容，且无法撤销。";
-"Turn on Allow Deleting on the start screen of WQ Files to delete, clear or clean." = "请在 WQ Files 首页开启“允许删除”后，才能删除、清除或清理。";
-"WQ Files needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install WQ Files with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "WQ Files 需要应用组（App Group）才能访问其他应用的文件夹，而签名工具把它移除了。没有它，任何内容都无法打开，应用列表会为空或显示“无令牌”。\n\n请使用 AltStore、SideStore 或 Impactor 重新安装 WQ Files（它们会创建应用组；Sideloadly 不会），或使用包含应用组的描述文件。通配符证书（许多 Feather/ESign 方案使用）无法做到。";
+"Turn on Allow Deleting on the start screen of DM FILES to delete, clear or clean." = "请在 DM FILES 首页开启“允许删除”后，才能删除、清除或清理。";
+"DM FILES needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install DM FILES with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "DM FILES 需要应用组（App Group）才能访问其他应用的文件夹，而签名工具把它移除了。没有它，任何内容都无法打开，应用列表会为空或显示“无令牌”。\n\n请使用 AltStore、SideStore 或 Impactor 重新安装 DM FILES（它们会创建应用组；Sideloadly 不会），或使用包含应用组的描述文件。通配符证书（许多 Feather/ESign 方案使用）无法做到。";
 
 /* 0.9.1: offloaded apps, Import as Backup, Keep Data Before Restore */
 " · offloaded" = " · 已卸载";
@@ -777,8 +777,8 @@
 "Open %@ to use the restored Documents and Library; tmp was not changed. The data from before was not kept (Keep Data Before Restore is off)." = "打开 %@ 以使用已还原的 Documents 和 Library；临时文件（tmp）未更改。之前的数据未保留（“还原前保留数据”已关闭）。";
 "Language" = "语言";
 "System Default" = "跟随系统";
-"Restart WQ Files" = "重新启动 WQ Files";
-"The new language is used the next time WQ Files starts." = "新语言将在 WQ Files 下次启动时生效。";
+"Restart DM FILES" = "重新启动 DM FILES";
+"The new language is used the next time DM FILES starts." = "新语言将在 DM FILES 下次启动时生效。";
 "Later" = "稍后";
 "Quit Now" = "立即退出";
 "%lld rows changed in the copy. Save on the database screen writes them to the app." = "已在副本中更改 %lld 行。在数据库界面点按“保存”会将其写入 App。";
@@ -788,7 +788,7 @@
 "Cannot change" = "无法更改";
 "Could not make a safety copy first: %@" = "无法先创建安全副本：%@";
 "Edit database" = "编辑数据库";
-"Editing WQ Files' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "正在编辑 WQ Files 的副本：点按行中的值可更改，轻扫行可删除，也可使用 SQL。“保存”会将副本写入 App；请先强制退出该 App。";
+"Editing DM FILES' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "正在编辑 DM FILES 的副本：点按行中的值可更改，轻扫行可删除，也可使用 SQL。“保存”会将副本写入 App；请先强制退出该 App。";
 "Force-quit the app first (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "请先强制退出该 App（在 App 切换器中向上轻扫）：App 运行时保存可能损坏其数据。之前的数据库会保留在“备份”中。";
 "Not saved" = "未保存";
 "Only read-only statements (SELECT, read-only PRAGMA, EXPLAIN) can run here. Tap Edit on the database screen to change it." = "此处只能运行只读语句（SELECT、只读 PRAGMA、EXPLAIN）。要更改数据库，请在数据库界面点按“编辑”。";
@@ -810,7 +810,7 @@
 "The edited copy failed SQLite's integrity check, so nothing was saved: %@" = "编辑后的副本未通过 SQLite 完整性检查，因此未保存任何内容：%@";
 "The row is gone." = "该行已不存在。";
 "Unsaved changes" = "未保存的更改";
-"You change WQ Files' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "你更改的是 WQ Files 的副本：点按行中的值可编辑，轻扫可删除行，也可运行 SQL。点按“保存”之前，任何内容都不会写入 App。\n\n保存前，请强制退出该 App（在 App 切换器中向上轻扫）：App 运行时保存可能损坏其数据。之前的数据库会保留在“备份”中。";
+"You change DM FILES' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "你更改的是 DM FILES 的副本：点按行中的值可编辑，轻扫可删除行，也可运行 SQL。点按“保存”之前，任何内容都不会写入 App。\n\n保存前，请强制退出该 App（在 App 切换器中向上轻扫）：App 运行时保存可能损坏其数据。之前的数据库会保留在“备份”中。";
 "%@ is not a folder anymore." = "%@ 已不再是文件夹。";
 "%@ is removed from Backups and can't be restored anymore." = "%@ 将从备份中移除，之后无法再还原。";
 "%lu backed-up files are removed from Backups (including files deleted or overwritten at the same time) and can't be restored anymore." = "%lu 个已备份的文件将从备份中移除（包括同时被删除或覆盖的文件），之后无法再还原。";
@@ -823,17 +823,17 @@
 "Checking the App Group…" = "正在检查应用组…";
 "Continue" = "继续";
 "Continue Anyway" = "仍然继续";
-"Continue Anyway opens WQ Files as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "“仍然继续”会按当前状态打开 WQ Files：列表可能为空或有误，不应据此还原或删除任何内容。";
+"Continue Anyway opens DM FILES as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "“仍然继续”会按当前状态打开 DM FILES：列表可能为空或有误，不应据此还原或删除任何内容。";
 "Continue Anyway?" = "仍然继续？";
 "Copy Original Path" = "复制原始路径";
 "Delete All" = "全部删除";
 "Delete Permanently" = "永久删除";
 "Delete Permanently?" = "永久删除？";
-"Files WQ Files deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "WQ Files 删除的文件，取自其在备份中的副本。“还原”会将文件放回原处（会创建缺失的文件夹）；“永久删除”会将其从备份中移除。长按可查看所有选项。";
+"Files DM FILES deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "DM FILES 删除的文件，取自其在备份中的副本。“还原”会将文件放回原处（会创建缺失的文件夹）；“永久删除”会将其从备份中移除。长按可查看所有选项。";
 "Finding other apps' folders…" = "正在查找其他 App 的文件夹…";
 "Lists may be empty or wrong. Don't restore, clean or delete anything based on them." = "列表可能为空或有误。请勿据此还原、清理或删除任何内容。";
 "Looking through Backups…" = "正在查看备份…";
-"Missing: the tool that signed WQ Files removed it. Re-install with AltStore, SideStore or Impactor." = "缺失：为 WQ Files 签名的工具移除了它。请使用 AltStore、SideStore 或 Impactor 重新安装。";
+"Missing: the tool that signed DM FILES removed it. Re-install with AltStore, SideStore or Impactor." = "缺失：为 DM FILES 签名的工具移除了它。请使用 AltStore、SideStore 或 Impactor 重新安装。";
 "Needs sandbox access." = "需要沙盒访问权限。";
 "Needs the App Group." = "需要应用组。";
 "None of %lu sampled app folders could be opened: the sandbox escape doesn't work on iOS %@." = "抽样的 %lu 个 App 文件夹均无法打开：沙盒逃逸在 iOS %@ 上无效。";
@@ -841,7 +841,7 @@
 "Not everything works here" = "此处并非所有功能都可用";
 "Nothing deleted" = "未删除任何内容";
 "Nothing to check." = "没有需要检查的内容。";
-"Only WQ Files' own folder was found (%lu in total)." = "只找到了 WQ Files 自己的文件夹（共 %lu 个）。";
+"Only DM FILES' own folder was found (%lu in total)." = "只找到了 DM FILES 自己的文件夹（共 %lu 个）。";
 "Other apps' folders" = "其他 App 的文件夹";
 "Put %@ back in\n%@?" = "将 %@ 放回\n%@？";
 "Recently Deleted" = "最近删除";
@@ -850,9 +850,9 @@
 "The scan for them was declined; Apps and the Cache Cleaner stay empty until it runs." = "相关扫描已被拒绝；在扫描运行之前，App 和缓存清理将保持为空。";
 "They can't be found on this device (see Log for the reason)." = "在此设备上找不到它们（原因请查看日志）。";
 "Try Again" = "重试";
-"WQ Files can't work properly here" = "WQ Files 无法在此正常运行";
-"WQ Files stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "WQ Files 已在此停止，而不是显示空的或错误的列表。新的 iOS 版本可能会阻止其沙盒访问；请将日志连同你的设备和 iOS 版本一起发送。";
-"iOS %@ hasn't been tested with this version of WQ Files." = "iOS %@ 尚未在此版本的 WQ Files 上测试过。";
+"DM FILES can't work properly here" = "DM FILES 无法在此正常运行";
+"DM FILES stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "DM FILES 已在此停止，而不是显示空的或错误的列表。新的 iOS 版本可能会阻止其沙盒访问；请将日志连同你的设备和 iOS 版本一起发送。";
+"iOS %@ hasn't been tested with this version of DM FILES." = "iOS %@ 尚未在此版本的 DM FILES 上测试过。";
 "iOS version" = "iOS 版本";
 "Explore" = "浏览";
 "Advanced" = "高级";
@@ -860,3 +860,16 @@
 "Show Hidden Apps" = "显示隐藏的应用";
 "Show Only Apps" = "仅显示应用";
 "%lu apps · %lu hidden" = "%lu 个应用 · %lu 个已隐藏";
+"Appearance" = "外观";
+"About" = "关于";
+"Help" = "帮助";
+"Credits" = "致谢";
+"Version" = "版本";
+"Theme" = "主题";
+"System" = "跟随系统";
+"Light" = "浅色";
+"Dark" = "深色";
+"Glass Effect" = "玻璃效果";
+"Colored Icons" = "彩色图标";
+"Accent Color" = "强调色";
+"Reset Appearance" = "重置外观";

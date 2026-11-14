@@ -8,7 +8,7 @@
 "Not restored" = "복원되지 않음";
 "Restore failed" = "복원 실패";
 "Restore recovery" = "복원 복구";
-"WQ Files" = "WQ Files";
+"DM FILES" = "DM FILES";
 "Containers" = "컨테이너";
 "Tools" = "도구";
 "App Data" = "앱 데이터";
@@ -116,8 +116,8 @@
 "Only regular files can be viewed." = "일반 파일만 볼 수 있습니다.";
 "Only regular files can be shared." = "일반 파일만 공유할 수 있습니다.";
 "Symbolic link" = "심볼릭 링크";
-"WQ Files does not follow symbolic links for viewing, sharing or editing." = "WQ Files는 보기, 공유 또는 편집 시 심볼릭 링크를 따라가지 않습니다.";
-"WQ Files does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "WQ Files는 보기, 공유 또는 편집 시 심볼릭 링크를 따라가지 않습니다. 대상을 명시적으로 열려면 ‘경로 복사’를 사용하십시오.";
+"DM FILES does not follow symbolic links for viewing, sharing or editing." = "DM FILES는 보기, 공유 또는 편집 시 심볼릭 링크를 따라가지 않습니다.";
+"DM FILES does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "DM FILES는 보기, 공유 또는 편집 시 심볼릭 링크를 따라가지 않습니다. 대상을 명시적으로 열려면 ‘경로 복사’를 사용하십시오.";
 "Symbolic links are not followed for viewing, sharing or editing." = "보기, 공유 또는 편집 시 심볼릭 링크를 따라가지 않습니다.";
 "Delete backups?" = "백업을 삭제할까요?";
 "Delete backup?" = "백업을 삭제할까요?";
@@ -308,7 +308,7 @@
 "Not cleared" = "지워지지 않음";
 "The backup did not complete, so nothing was deleted." = "백업이 완료되지 않아 아무것도 삭제되지 않았습니다.";
 "Clear Without Backup" = "백업 없이 지우기";
-"\n\nThis backup is unverified (%@). WQ Files will re-check its parts before changing anything." = "\n\n이 백업은 확인되지 않았습니다(%@). WQ Files는 변경하기 전에 해당 파트를 다시 확인합니다.";
+"\n\nThis backup is unverified (%@). DM FILES will re-check its parts before changing anything." = "\n\n이 백업은 확인되지 않았습니다(%@). DM FILES는 변경하기 전에 해당 파트를 다시 확인합니다.";
 "no typed manifest" = "형식화된 매니페스트 없음";
 "Replaces the app's current Documents and Library with the backup from %@; tmp is left untouched. The current data is backed up first, and put back if anything fails. Close the app first: a running app can make the operation non-snapshot-consistent.%@" = "앱의 현재 Documents 및 Library를 %@의 백업으로 대치합니다. tmp는 변경되지 않습니다. 현재 데이터가 먼저 백업되며 실패할 경우 되돌려집니다. 먼저 앱을 닫으십시오. 앱이 실행 중이면 스냅샷 일치성을 유지할 수 없습니다.%@";
 "Restoring %@…" = "%@ 복원 중…";
@@ -532,9 +532,9 @@
 "Scan all files?" = "모든 파일을 스캔할까요?";
 "Not Now" = "지금 안 함";
 "Start Scan" = "스캔 시작";
-"To list %@, WQ Files has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep WQ Files open while it scans." = "%@의 목록을 표시하려면 WQ Files가 이 기기의 모든 파일을 한 번 확인해야 합니다: 파일 %@개, %@.\n\n처음 한 번만 필요하며, 이후 스캔은 새 파일만 확인하므로 몇 초밖에 걸리지 않습니다.\n\n스캔하는 동안 WQ Files를 열어 두십시오.";
+"To list %@, DM FILES has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep DM FILES open while it scans." = "%@의 목록을 표시하려면 DM FILES가 이 기기의 모든 파일을 한 번 확인해야 합니다: 파일 %@개, %@.\n\n처음 한 번만 필요하며, 이후 스캔은 새 파일만 확인하므로 몇 초밖에 걸리지 않습니다.\n\n스캔하는 동안 DM FILES를 열어 두십시오.";
 "Scanning all files" = "모든 파일 스캔 중";
-"iOS doesn't let WQ Files list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep WQ Files open. Switching to another app or locking the screen pauses the scan." = "iOS는 WQ Files가 이 폴더들을 직접 나열하도록 허용하지 않으므로 기기의 모든 파일을 한 번 검사합니다. 처음 한 번만 느리며 이후 스캔은 새로운 파일만 확인합니다.\n\nWQ Files를 열어 두십시오. 다른 앱으로 전환하거나 화면을 잠그면 스캔이 일시 정지됩니다.";
+"iOS doesn't let DM FILES list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep DM FILES open. Switching to another app or locking the screen pauses the scan." = "iOS는 DM FILES가 이 폴더들을 직접 나열하도록 허용하지 않으므로 기기의 모든 파일을 한 번 검사합니다. 처음 한 번만 느리며 이후 스캔은 새로운 파일만 확인합니다.\n\nDM FILES를 열어 두십시오. 다른 앱으로 전환하거나 화면을 잠그면 스캔이 일시 정지됩니다.";
 "Starting…" = "시작 중…";
 "Hide" = "가리기";
 "Stop Scan" = "스캔 중단";
@@ -547,7 +547,7 @@
 "the app folders" = "앱 폴더";
 "Signing problem: no App Group" = "서명 문제: App Group 없음";
 "Signing Help" = "서명 도움말";
-"WQ Files %@ (%@) by kolbicz" = "kolbicz의 WQ Files %@ (%@)";
+"DM FILES %@ (%@) by kolbicz" = "kolbicz의 DM FILES %@ (%@)";
 "SQLite Viewer" = "SQLite 뷰어";
 "SQL" = "SQL";
 "Copy" = "복사";
@@ -631,7 +631,7 @@
 "Show" = "보기";
 "Copy Bundle ID" = "번들 ID 복사";
 "%@ of data" = "%@ 데이터";
-"WQ Files has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "WQ Files에 App Group이 없으므로 다른 앱의 폴더를 열 수 없습니다. App Group을 유지하는 도구로 다시 서명하십시오(README의 Signing 참조).";
+"DM FILES has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "DM FILES에 App Group이 없으므로 다른 앱의 폴더를 열 수 없습니다. App Group을 유지하는 도구로 다시 서명하십시오(README의 Signing 참조).";
 "Save in progress" = "저장 진행 중";
 "Wait for the current save to finish before leaving or making more changes." = "나가거나 추가 변경을 수행하기 전에 현재 저장이 완료될 때까지 기다리십시오.";
 "Discard changes?" = "변경 사항을 폐기할까요?";
@@ -651,7 +651,7 @@
 "Select Backups" = "백업 선택";
 "Delete Backup…" = "백업 삭제…";
 "No App Group" = "App Group 없음";
-"WQ Files by kolbicz" = "kolbicz의 WQ Files";
+"DM FILES by kolbicz" = "kolbicz의 DM FILES";
 "Sandbox escape: worse_query by @forcequitOS" = "샌드박스 이스케이프: @forcequitOS의 worse_query";
 "On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files." = "iOS 26에서는 시스템 데이터 및 시스템 그룹에 접근할 수 없으며(worse_query는 iOS 27에서만 이를 지원함), 내부 데몬은 모든 파일 ID를 스캔해야 합니다. 사용량이 많은 기기에서는 첫 스캔에 1시간 가까이 걸릴 수 있으며, 이후 스캔은 새 파일만 확인합니다.";
 "Overwritten and deleted files are copied to Backups first (also visible in the Files app). Long-press a backup to restore it." = "덮어쓰거나 삭제된 파일은 먼저 ‘Backups’로 복사됩니다(파일 앱에서도 확인 가능). 백업을 길게 누르면 복원할 수 있습니다.";
@@ -665,7 +665,7 @@
 "the crash-log target is not the expected canonical directory" = "충돌 로그 대상이 예상된 표준 디렉토리가 아님";
 "the scanned cache targets are incomplete" = "스캔된 캐시 대상이 불완전함";
 "the app container identity or ancestry is unavailable" = "앱 컨테이너 식별 정보 또는 상위 경로를 사용할 수 없음";
-"WQ Files %@ (%@)\n%@\n\n%@" = "WQ Files %@ (%@)\n%@\n\n%@";
+"DM FILES %@ (%@)\n%@\n\n%@" = "DM FILES %@ (%@)\n%@\n\n%@";
 "0 KB" = "0 KB";
 "Discard" = "폐기";
 "%@ · %@ · no identifier" = "%@ · %@ · 식별자 없음";
@@ -681,7 +681,7 @@
 "change" = "수정";
 "read" = "읽기";
 "open" = "열기";
-"This file belongs to %@ (mode %o) and only its owner may %@ it. WQ Files reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "이 파일은 %@ 소유(모드 %o)이며 소유자만 이 파일을 %@할 수 있습니다. WQ Files가 폴더에 접근하지만 mobile(uid %d)(으)로 실행되므로 어떤 앱도 이 파일을 %@할 수 없습니다.";
+"This file belongs to %@ (mode %o) and only its owner may %@ it. DM FILES reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "이 파일은 %@ 소유(모드 %o)이며 소유자만 이 파일을 %@할 수 있습니다. DM FILES가 폴더에 접근하지만 mobile(uid %d)(으)로 실행되므로 어떤 앱도 이 파일을 %@할 수 없습니다.";
 "The archive would be larger than 4 GB, which isn't supported yet." = "아카이브가 4 GB를 초과하게 되며 이는 아직 지원되지 않습니다.";
 "Too many items for one ZIP (more than 65535)." = "하나의 ZIP에 항목이 너무 많습니다(65,535개 초과).";
 "Can't read %@ (%s)" = "%@을(를) 읽을 수 없습니다 (%s)";
@@ -712,8 +712,8 @@
 "An item named \"%@\" is already there" = "이름이 “%@”인 항목이 이미 있습니다";
 "Items can't be moved to another volume" = "항목을 다른 볼륨으로 이동할 수 없습니다";
 
-/* Plural forms and WQ Files 0.9 localization additions. */
-"%@ isn't installed, or WQ Files can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "%@이(가) 설치되지 않았거나 WQ Files가 해당 데이터에 접근할 수 없습니다. 백업은 설치된 앱으로만 복원할 수 있습니다. 앱을 설치하고 한 번 연 다음 다시 시도하십시오.";
+/* Plural forms and DM FILES 0.9 localization additions. */
+"%@ isn't installed, or DM FILES can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "%@이(가) 설치되지 않았거나 DM FILES가 해당 데이터에 접근할 수 없습니다. 백업은 설치된 앱으로만 복원할 수 있습니다. 앱을 설치하고 한 번 연 다음 다시 시도하십시오.";
 "%@ selected in %lu item" = "%@ 선택됨(항목 %lu개)";
 "%@ selected in %lu items" = "%@ 선택됨(항목 %lu개)";
 "%ld item" = "%ld개 항목";
@@ -748,8 +748,8 @@
 "There is no complete backup of %@ to restore." = "복원할 %@의 완전한 백업이 없습니다.";
 "This permanently removes %lu complete backup and everything inside it. It cannot be undone." = "%lu개의 완전한 백업과 그 안의 모든 항목이 영구적으로 제거됩니다. 이 작업은 실행 취소할 수 없습니다.";
 "This permanently removes %lu complete backups and everything inside them. It cannot be undone." = "%lu개의 완전한 백업과 그 안의 모든 항목이 영구적으로 제거됩니다. 이 작업은 실행 취소할 수 없습니다.";
-"Turn on Allow Deleting on the start screen of WQ Files to delete, clear or clean." = "삭제, 지우기 또는 정리를 수행하려면 WQ Files 시작 화면에서 ‘삭제 허용’을 켜십시오.";
-"WQ Files needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install WQ Files with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "WQ Files가 다른 앱의 폴더에 접근하려면 App Group이 필요하지만, 서명 도구가 이를 제거했습니다. App Group이 없으면 아무것도 열 수 없으며 앱 목록이 비어 있거나 \"NO TOKEN\"으로 표시됩니다.\n\nAltStore, SideStore 또는 Impactor(이 도구들은 App Group을 생성하며, Sideloadly는 생성하지 않음)를 사용하거나 App Group이 포함된 프로비저닝 프로파일을 사용하여 WQ Files를 다시 설치하십시오. 와일드카드 인증서(많은 Feather/ESign 설정에서 사용됨)로는 지원되지 않습니다.";
+"Turn on Allow Deleting on the start screen of DM FILES to delete, clear or clean." = "삭제, 지우기 또는 정리를 수행하려면 DM FILES 시작 화면에서 ‘삭제 허용’을 켜십시오.";
+"DM FILES needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install DM FILES with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "DM FILES가 다른 앱의 폴더에 접근하려면 App Group이 필요하지만, 서명 도구가 이를 제거했습니다. App Group이 없으면 아무것도 열 수 없으며 앱 목록이 비어 있거나 \"NO TOKEN\"으로 표시됩니다.\n\nAltStore, SideStore 또는 Impactor(이 도구들은 App Group을 생성하며, Sideloadly는 생성하지 않음)를 사용하거나 App Group이 포함된 프로비저닝 프로파일을 사용하여 DM FILES를 다시 설치하십시오. 와일드카드 인증서(많은 Feather/ESign 설정에서 사용됨)로는 지원되지 않습니다.";
 
 /* 0.9.1: offloaded apps, Import as Backup, Keep Data Before Restore */
 " · offloaded" = " · 정리됨";
@@ -777,8 +777,8 @@
 "Open %@ to use the restored Documents and Library; tmp was not changed. The data from before was not kept (Keep Data Before Restore is off)." = "복원된 Documents 및 Library를 사용하려면 %@을(를) 여십시오. tmp는 변경되지 않았습니다. 이전 데이터는 보관되지 않았습니다(Keep Data Before Restore 꺼짐).";
 "Language" = "언어";
 "System Default" = "시스템 기본값";
-"Restart WQ Files" = "WQ Files 다시 시작";
-"The new language is used the next time WQ Files starts." = "새로운 언어는 WQ Files가 다음에 시작될 때 적용됩니다.";
+"Restart DM FILES" = "DM FILES 다시 시작";
+"The new language is used the next time DM FILES starts." = "새로운 언어는 DM FILES가 다음에 시작될 때 적용됩니다.";
 "Later" = "나중에";
 "Quit Now" = "지금 종료";
 "%lld rows changed in the copy. Save on the database screen writes them to the app." = "사본에서 %lld개 행이 변경되었습니다. 데이터베이스 화면에서 ‘저장’을 누르면 앱에 기록됩니다.";
@@ -788,7 +788,7 @@
 "Cannot change" = "변경할 수 없음";
 "Could not make a safety copy first: %@" = "먼저 안전 사본을 만들 수 없습니다: %@";
 "Edit database" = "데이터베이스 편집";
-"Editing WQ Files' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "WQ Files의 사본을 편집 중입니다. 행의 값을 탭하여 변경하거나, 행을 쓸어넘겨 삭제하거나, SQL을 사용하십시오. ‘저장’을 누르면 사본이 앱에 기록됩니다. 먼저 앱을 강제 종료하십시오.";
+"Editing DM FILES' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "DM FILES의 사본을 편집 중입니다. 행의 값을 탭하여 변경하거나, 행을 쓸어넘겨 삭제하거나, SQL을 사용하십시오. ‘저장’을 누르면 사본이 앱에 기록됩니다. 먼저 앱을 강제 종료하십시오.";
 "Force-quit the app first (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "먼저 앱을 강제 종료하십시오(앱 전환기에서 위로 쓸어올려 종료). 앱 실행 중에 저장하면 데이터가 손상될 수 있습니다. 이전 데이터베이스는 ‘Backups’에 보관됩니다.";
 "Not saved" = "저장되지 않음";
 "Only read-only statements (SELECT, read-only PRAGMA, EXPLAIN) can run here. Tap Edit on the database screen to change it." = "여기서는 읽기 전용 문(SELECT, 읽기 전용 PRAGMA, EXPLAIN)만 실행할 수 있습니다. 변경하려면 데이터베이스 화면에서 ‘편집’을 탭하십시오.";
@@ -810,7 +810,7 @@
 "The edited copy failed SQLite's integrity check, so nothing was saved: %@" = "편집한 사본이 SQLite 무결성 검사를 통과하지 못해 아무것도 저장되지 않았습니다: %@";
 "The row is gone." = "행이 더 이상 존재하지 않습니다.";
 "Unsaved changes" = "저장되지 않은 변경 사항";
-"You change WQ Files' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "WQ Files의 사본을 변경합니다. 행에서 값을 탭하여 편집하거나, 쓸어넘겨 행을 삭제하거나, SQL을 실행하십시오. ‘저장’을 탭하기 전에는 앱에 아무것도 반영되지 않습니다.\n\n저장하기 전에 앱을 강제 종료하십시오(앱 전환기에서 위로 쓸어올려 종료). 앱 실행 중에 저장하면 데이터가 손상될 수 있습니다. 이전 데이터베이스는 ‘Backups’에 보관됩니다.";
+"You change DM FILES' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "DM FILES의 사본을 변경합니다. 행에서 값을 탭하여 편집하거나, 쓸어넘겨 행을 삭제하거나, SQL을 실행하십시오. ‘저장’을 탭하기 전에는 앱에 아무것도 반영되지 않습니다.\n\n저장하기 전에 앱을 강제 종료하십시오(앱 전환기에서 위로 쓸어올려 종료). 앱 실행 중에 저장하면 데이터가 손상될 수 있습니다. 이전 데이터베이스는 ‘Backups’에 보관됩니다.";
 "%@ is not a folder anymore." = "%@은(는) 더 이상 폴더가 아닙니다.";
 "%@ is removed from Backups and can't be restored anymore." = "%@이(가) 백업에서 제거되며 더 이상 복원할 수 없습니다.";
 "%lu backed-up files are removed from Backups (including files deleted or overwritten at the same time) and can't be restored anymore." = "백업된 파일 %lu개가 백업에서 제거되며(동시에 삭제되거나 덮어쓴 파일 포함) 더 이상 복원할 수 없습니다.";
@@ -823,17 +823,17 @@
 "Checking the App Group…" = "App Group 확인 중…";
 "Continue" = "계속";
 "Continue Anyway" = "무시하고 계속";
-"Continue Anyway opens WQ Files as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "‘무시하고 계속’을 선택하면 WQ Files가 현재 상태 그대로 열립니다. 목록이 비어 있거나 잘못될 수 있으므로 이를 근거로 복원하거나 삭제해서는 안 됩니다.";
+"Continue Anyway opens DM FILES as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "‘무시하고 계속’을 선택하면 DM FILES가 현재 상태 그대로 열립니다. 목록이 비어 있거나 잘못될 수 있으므로 이를 근거로 복원하거나 삭제해서는 안 됩니다.";
 "Continue Anyway?" = "무시하고 계속하시겠습니까?";
 "Copy Original Path" = "원래 경로 복사";
 "Delete All" = "모두 삭제";
 "Delete Permanently" = "영구 삭제";
 "Delete Permanently?" = "영구 삭제하시겠습니까?";
-"Files WQ Files deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "WQ Files가 삭제한 파일로, 백업에 있는 사본에서 표시됩니다. ‘복원’은 파일을 원래 위치로 되돌리며(없는 폴더는 생성됨), ‘영구 삭제’는 파일을 백업에서 제거합니다. 모든 옵션을 보려면 길게 누르십시오.";
+"Files DM FILES deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "DM FILES가 삭제한 파일로, 백업에 있는 사본에서 표시됩니다. ‘복원’은 파일을 원래 위치로 되돌리며(없는 폴더는 생성됨), ‘영구 삭제’는 파일을 백업에서 제거합니다. 모든 옵션을 보려면 길게 누르십시오.";
 "Finding other apps' folders…" = "다른 앱의 폴더 찾는 중…";
 "Lists may be empty or wrong. Don't restore, clean or delete anything based on them." = "목록이 비어 있거나 잘못될 수 있습니다. 이를 근거로 복원, 정리 또는 삭제하지 마십시오.";
 "Looking through Backups…" = "백업 확인 중…";
-"Missing: the tool that signed WQ Files removed it. Re-install with AltStore, SideStore or Impactor." = "없음: WQ Files에 서명한 도구가 이를 제거했습니다. AltStore, SideStore 또는 Impactor로 다시 설치하십시오.";
+"Missing: the tool that signed DM FILES removed it. Re-install with AltStore, SideStore or Impactor." = "없음: DM FILES에 서명한 도구가 이를 제거했습니다. AltStore, SideStore 또는 Impactor로 다시 설치하십시오.";
 "Needs sandbox access." = "샌드박스 접근이 필요합니다.";
 "Needs the App Group." = "App Group이 필요합니다.";
 "None of %lu sampled app folders could be opened: the sandbox escape doesn't work on iOS %@." = "샘플링한 앱 폴더 %lu개 중 어느 것도 열 수 없었습니다. iOS %@에서는 샌드박스 탈출이 작동하지 않습니다.";
@@ -841,7 +841,7 @@
 "Not everything works here" = "일부 기능이 작동하지 않음";
 "Nothing deleted" = "삭제된 항목 없음";
 "Nothing to check." = "확인할 항목이 없습니다.";
-"Only WQ Files' own folder was found (%lu in total)." = "WQ Files 자체 폴더만 발견되었습니다(총 %lu개).";
+"Only DM FILES' own folder was found (%lu in total)." = "DM FILES 자체 폴더만 발견되었습니다(총 %lu개).";
 "Other apps' folders" = "다른 앱의 폴더";
 "Put %@ back in\n%@?" = "%@을(를) 다음 위치로 되돌리시겠습니까?\n%@";
 "Recently Deleted" = "최근 삭제된 항목";
@@ -850,9 +850,9 @@
 "The scan for them was declined; Apps and the Cache Cleaner stay empty until it runs." = "이에 대한 스캔이 거부되었습니다. 스캔이 실행될 때까지 앱 및 캐시 정리기는 비어 있습니다.";
 "They can't be found on this device (see Log for the reason)." = "이 기기에서 찾을 수 없습니다(이유는 로그 참조).";
 "Try Again" = "다시 시도";
-"WQ Files can't work properly here" = "WQ Files가 여기서 제대로 작동할 수 없음";
-"WQ Files stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "WQ Files는 비어 있거나 잘못된 목록을 표시하는 대신 여기서 중지되었습니다. 새 iOS 버전이 샌드박스 접근을 차단할 수 있습니다. 사용 중인 기기 및 iOS 버전과 함께 로그를 보내 주십시오.";
-"iOS %@ hasn't been tested with this version of WQ Files." = "iOS %@은(는) 이 버전의 WQ Files에서 테스트되지 않았습니다.";
+"DM FILES can't work properly here" = "DM FILES가 여기서 제대로 작동할 수 없음";
+"DM FILES stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "DM FILES는 비어 있거나 잘못된 목록을 표시하는 대신 여기서 중지되었습니다. 새 iOS 버전이 샌드박스 접근을 차단할 수 있습니다. 사용 중인 기기 및 iOS 버전과 함께 로그를 보내 주십시오.";
+"iOS %@ hasn't been tested with this version of DM FILES." = "iOS %@은(는) 이 버전의 DM FILES에서 테스트되지 않았습니다.";
 "iOS version" = "iOS 버전";
 "Explore" = "탐색";
 "Advanced" = "고급";
@@ -860,3 +860,16 @@
 "Show Hidden Apps" = "숨겨진 앱 보기";
 "Show Only Apps" = "앱만 보기";
 "%lu apps · %lu hidden" = "앱 %lu개 · 숨김 %lu개";
+"Appearance" = "화면 스타일";
+"About" = "정보";
+"Help" = "도움말";
+"Credits" = "크레딧";
+"Version" = "버전";
+"Theme" = "테마";
+"System" = "시스템";
+"Light" = "라이트";
+"Dark" = "다크";
+"Glass Effect" = "글라스 효과";
+"Colored Icons" = "컬러 아이콘";
+"Accent Color" = "강조 색상";
+"Reset Appearance" = "화면 스타일 초기화";

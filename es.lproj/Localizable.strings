@@ -8,7 +8,7 @@
 "Not restored" = "No restaurado";
 "Restore failed" = "Error al restaurar";
 "Restore recovery" = "Recuperación de la restauración";
-"WQ Files" = "WQ Files";
+"DM FILES" = "DM FILES";
 "Containers" = "Contenedores";
 "Tools" = "Tools";
 "App Data" = "Datos de apps";
@@ -116,8 +116,8 @@
 "Only regular files can be viewed." = "Solo se pueden ver archivos normales.";
 "Only regular files can be shared." = "Solo se pueden compartir archivos normales.";
 "Symbolic link" = "Enlace simbólico";
-"WQ Files does not follow symbolic links for viewing, sharing or editing." = "WQ Files no sigue enlaces simbólicos para ver, compartir o editar.";
-"WQ Files does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "WQ Files no sigue enlaces simbólicos para ver, compartir o editar. Usa “Copiar ruta” para abrir el destino explícitamente.";
+"DM FILES does not follow symbolic links for viewing, sharing or editing." = "DM FILES no sigue enlaces simbólicos para ver, compartir o editar.";
+"DM FILES does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly." = "DM FILES no sigue enlaces simbólicos para ver, compartir o editar. Usa “Copiar ruta” para abrir el destino explícitamente.";
 "Symbolic links are not followed for viewing, sharing or editing." = "No se siguen los enlaces simbólicos para ver, compartir o editar.";
 "Delete backups?" = "¿Eliminar copias de seguridad?";
 "Delete backup?" = "¿Eliminar copia de seguridad?";
@@ -308,7 +308,7 @@
 "Not cleared" = "No borrado";
 "The backup did not complete, so nothing was deleted." = "La copia de seguridad no se ha completado, así que no se ha eliminado nada.";
 "Clear Without Backup" = "Borrar sin copia de seguridad";
-"\n\nThis backup is unverified (%@). WQ Files will re-check its parts before changing anything." = "\n\nEsta copia de seguridad no está verificada (%@). WQ Files volverá a comprobar sus partes antes de cambiar nada.";
+"\n\nThis backup is unverified (%@). DM FILES will re-check its parts before changing anything." = "\n\nEsta copia de seguridad no está verificada (%@). DM FILES volverá a comprobar sus partes antes de cambiar nada.";
 "no typed manifest" = "sin manifiesto tipado";
 "Replaces the app's current Documents and Library with the backup from %@; tmp is left untouched. The current data is backed up first, and put back if anything fails. Close the app first: a running app can make the operation non-snapshot-consistent.%@" = "Reemplaza las carpetas Documents y Library actuales de la app por la copia de seguridad del %@; tmp no se modifica. Primero se hace una copia de seguridad de los datos actuales, que se restauran si algo falla. Cierra primero la app: si está en ejecución, la operación puede no ser coherente.%@";
 "Restoring %@…" = "Restaurando %@…";
@@ -532,9 +532,9 @@
 "Scan all files?" = "¿Analizar todos los archivos?";
 "Not Now" = "Ahora no";
 "Start Scan" = "Iniciar análisis";
-"To list %@, WQ Files has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep WQ Files open while it scans." = "Para mostrar %@, WQ Files tiene que revisar una vez cada archivo de este dispositivo: %@ archivos, %@.\n\nSolo es necesario la primera vez; los análisis posteriores solo revisan los archivos nuevos y tardan unos segundos.\n\nMantén WQ Files abierto mientras analiza.";
+"To list %@, DM FILES has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep DM FILES open while it scans." = "Para mostrar %@, DM FILES tiene que revisar una vez cada archivo de este dispositivo: %@ archivos, %@.\n\nSolo es necesario la primera vez; los análisis posteriores solo revisan los archivos nuevos y tardan unos segundos.\n\nMantén DM FILES abierto mientras analiza.";
 "Scanning all files" = "Analizando todos los archivos";
-"iOS doesn't let WQ Files list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep WQ Files open. Switching to another app or locking the screen pauses the scan." = "iOS no permite que WQ Files liste estas carpetas directamente, así que revisa una vez cada archivo de este dispositivo. Solo es lento la primera vez: los análisis posteriores solo revisan los archivos nuevos.\n\nMantén WQ Files abierto. Si cambias a otra app o bloqueas la pantalla, el análisis se pausa.";
+"iOS doesn't let DM FILES list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep DM FILES open. Switching to another app or locking the screen pauses the scan." = "iOS no permite que DM FILES liste estas carpetas directamente, así que revisa una vez cada archivo de este dispositivo. Solo es lento la primera vez: los análisis posteriores solo revisan los archivos nuevos.\n\nMantén DM FILES abierto. Si cambias a otra app o bloqueas la pantalla, el análisis se pausa.";
 "Starting…" = "Iniciando…";
 "Hide" = "Ocultar";
 "Stop Scan" = "Detener análisis";
@@ -547,7 +547,7 @@
 "the app folders" = "las carpetas de apps";
 "Signing problem: no App Group" = "Problema de firma: sin App Group";
 "Signing Help" = "Ayuda con la firma";
-"WQ Files %@ (%@) by kolbicz" = "WQ Files %@ (%@) de kolbicz";
+"DM FILES %@ (%@) by kolbicz" = "DM FILES %@ (%@) de kolbicz";
 "SQLite Viewer" = "Visor de SQLite";
 "SQL" = "SQL";
 "Copy" = "Copiar";
@@ -631,7 +631,7 @@
 "Show" = "Mostrar";
 "Copy Bundle ID" = "Copiar ID de paquete";
 "%@ of data" = "%@ de datos";
-"WQ Files has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "WQ Files no tiene App Group, así que no puede abrir las carpetas de otras apps. Vuelve a firmarlo con una herramienta que conserve el App Group (consulta “Signing” en el README).";
+"DM FILES has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README)." = "DM FILES no tiene App Group, así que no puede abrir las carpetas de otras apps. Vuelve a firmarlo con una herramienta que conserve el App Group (consulta “Signing” en el README).";
 "Save in progress" = "Guardando";
 "Wait for the current save to finish before leaving or making more changes." = "Espera a que termine de guardarse antes de salir o hacer más cambios.";
 "Discard changes?" = "¿Descartar cambios?";
@@ -651,7 +651,7 @@
 "Select Backups" = "Seleccionar copias de seguridad";
 "Delete Backup…" = "Eliminar copia de seguridad…";
 "No App Group" = "Sin App Group";
-"WQ Files by kolbicz" = "WQ Files de kolbicz";
+"DM FILES by kolbicz" = "DM FILES de kolbicz";
 "Sandbox escape: worse_query by @forcequitOS" = "Escape del sandbox: worse_query de @forcequitOS";
 "On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files." = "En iOS 26 no se puede acceder a Datos del sistema ni a Grupos del sistema (worse_query solo los cubre en iOS 27), y Daemons internos requiere analizar cada ID de archivo: el primer análisis puede tardar casi una hora en un dispositivo muy usado; los siguientes solo revisan los archivos nuevos.";
 "Overwritten and deleted files are copied to Backups first (also visible in the Files app). Long-press a backup to restore it." = "Los archivos sobrescritos y eliminados se copian primero a “Copias de seguridad” (también visibles en la app Archivos). Mantén pulsada una copia de seguridad para restaurarla.";
@@ -665,7 +665,7 @@
 "the crash-log target is not the expected canonical directory" = "el destino de los registros de fallos no es el directorio canónico esperado";
 "the scanned cache targets are incomplete" = "los destinos de caché analizados están incompletos";
 "the app container identity or ancestry is unavailable" = "la identidad o la jerarquía del contenedor de la app no están disponibles";
-"WQ Files %@ (%@)\n%@\n\n%@" = "WQ Files %@ (%@)\n%@\n\n%@";
+"DM FILES %@ (%@)\n%@\n\n%@" = "DM FILES %@ (%@)\n%@\n\n%@";
 "0 KB" = "0 KB";
 "Discard" = "Descartar";
 "%@ · %@ · no identifier" = "%@ · %@ · sin identificador";
@@ -681,7 +681,7 @@
 "change" = "modificar";
 "read" = "leer";
 "open" = "abrir";
-"This file belongs to %@ (mode %o) and only its owner may %@ it. WQ Files reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "Este archivo pertenece a %@ (modo %o) y solo su propietario puede %@lo. WQ Files llega a la carpeta, pero se ejecuta como mobile (uid %d), así que ninguna app puede %@ este archivo.";
+"This file belongs to %@ (mode %o) and only its owner may %@ it. DM FILES reaches the folder, but runs as mobile (uid %d), so no app can %@ this file." = "Este archivo pertenece a %@ (modo %o) y solo su propietario puede %@lo. DM FILES llega a la carpeta, pero se ejecuta como mobile (uid %d), así que ninguna app puede %@ este archivo.";
 "The archive would be larger than 4 GB, which isn't supported yet." = "El archivo comprimido superaría los 4 GB, lo cual aún no es compatible.";
 "Too many items for one ZIP (more than 65535)." = "Demasiados elementos para un ZIP (más de 65535).";
 "Can't read %@ (%s)" = "No se puede leer %@ (%s)";
@@ -712,8 +712,8 @@
 "An item named \"%@\" is already there" = "Ya hay un elemento llamado “%@” ahí";
 "Items can't be moved to another volume" = "Los elementos no se pueden mover a otro volumen";
 
-/* Plural forms and WQ Files 0.9 localization additions. */
-"%@ isn't installed, or WQ Files can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "%@ no está instalada o WQ Files no puede acceder a sus datos. Una copia de seguridad solo se puede restaurar en la app instalada: instálala, ábrela una vez e inténtalo de nuevo.";
+/* Plural forms and DM FILES 0.9 localization additions. */
+"%@ isn't installed, or DM FILES can't reach its data. A backup can only be restored into the installed app: install it, open it once, then try again." = "%@ no está instalada o DM FILES no puede acceder a sus datos. Una copia de seguridad solo se puede restaurar en la app instalada: instálala, ábrela una vez e inténtalo de nuevo.";
 "%@ selected in %lu item" = "%@ seleccionados en %lu elemento";
 "%@ selected in %lu items" = "%@ seleccionados en %lu elementos";
 "%ld item" = "%ld elemento";
@@ -748,8 +748,8 @@
 "There is no complete backup of %@ to restore." = "No hay ninguna copia de seguridad completa de %@ para restaurar.";
 "This permanently removes %lu complete backup and everything inside it. It cannot be undone." = "Se eliminará de forma permanente %lu copia de seguridad completa y todo su contenido. Esta acción no se puede deshacer.";
 "This permanently removes %lu complete backups and everything inside them. It cannot be undone." = "Se eliminarán de forma permanente %lu copias de seguridad completas y todo su contenido. Esta acción no se puede deshacer.";
-"Turn on Allow Deleting on the start screen of WQ Files to delete, clear or clean." = "Activa “Permitir eliminar” en la pantalla de inicio de WQ Files para eliminar, borrar o limpiar.";
-"WQ Files needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install WQ Files with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "WQ Files necesita un App Group para acceder a las carpetas de otras apps, y la herramienta con la que se firmó lo ha eliminado. Sin él no se puede abrir nada, y las listas de apps se quedan vacías o muestran “SIN TOKEN”.\n\nVuelve a instalar WQ Files con AltStore, SideStore o Impactor (crean el App Group; Sideloadly no), o con un perfil de aprovisionamiento que lo incluya. Con certificados comodín (como los que usan muchas configuraciones de Feather/ESign) no es posible.";
+"Turn on Allow Deleting on the start screen of DM FILES to delete, clear or clean." = "Activa “Permitir eliminar” en la pantalla de inicio de DM FILES para eliminar, borrar o limpiar.";
+"DM FILES needs an App Group to reach other apps' folders, and the tool that signed it removed it. Without it nothing can be opened, and app lists stay empty or show \"NO TOKEN\".\n\nRe-install DM FILES with AltStore, SideStore or Impactor (they create the App Group; Sideloadly doesn't), or with a provisioning profile that contains one. Wildcard certificates (as used by many Feather/ESign setups) can't." = "DM FILES necesita un App Group para acceder a las carpetas de otras apps, y la herramienta con la que se firmó lo ha eliminado. Sin él no se puede abrir nada, y las listas de apps se quedan vacías o muestran “SIN TOKEN”.\n\nVuelve a instalar DM FILES con AltStore, SideStore o Impactor (crean el App Group; Sideloadly no), o con un perfil de aprovisionamiento que lo incluya. Con certificados comodín (como los que usan muchas configuraciones de Feather/ESign) no es posible.";
 
 /* 0.9.1: offloaded apps, Import as Backup, Keep Data Before Restore */
 " · offloaded" = " · desinstalada";
@@ -777,8 +777,8 @@
 "Open %@ to use the restored Documents and Library; tmp was not changed. The data from before was not kept (Keep Data Before Restore is off)." = "Abre %@ para usar las carpetas Documents y Library restauradas; tmp no se ha modificado. Los datos anteriores no se han conservado (“Conservar datos antes de restaurar” está desactivado).";
 "Language" = "Idioma";
 "System Default" = "Predeterminado del sistema";
-"Restart WQ Files" = "Reiniciar WQ Files";
-"The new language is used the next time WQ Files starts." = "El nuevo idioma se usará la próxima vez que se inicie WQ Files.";
+"Restart DM FILES" = "Reiniciar DM FILES";
+"The new language is used the next time DM FILES starts." = "El nuevo idioma se usará la próxima vez que se inicie DM FILES.";
 "Later" = "Más tarde";
 "Quit Now" = "Salir ahora";
 "%lld rows changed in the copy. Save on the database screen writes them to the app." = "%lld filas cambiadas en la copia. “Guardar” en la pantalla de la base de datos las escribe en la app.";
@@ -788,7 +788,7 @@
 "Cannot change" = "No se puede cambiar";
 "Could not make a safety copy first: %@" = "No se ha podido hacer primero una copia de seguridad: %@";
 "Edit database" = "Editar base de datos";
-"Editing WQ Files' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "Estás editando la copia de WQ Files: toca un valor de una fila para cambiarlo, desliza una fila para eliminarla o usa SQL. “Guardar” escribe la copia en la app; fuerza primero el cierre de la app.";
+"Editing DM FILES' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first." = "Estás editando la copia de DM FILES: toca un valor de una fila para cambiarlo, desliza una fila para eliminarla o usa SQL. “Guardar” escribe la copia en la app; fuerza primero el cierre de la app.";
 "Force-quit the app first (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "Fuerza primero el cierre de la app (desliza hacia arriba en el selector de apps): guardar mientras está en ejecución puede dañar sus datos. La base de datos anterior se conserva en “Copias de seguridad”.";
 "Not saved" = "No guardado";
 "Only read-only statements (SELECT, read-only PRAGMA, EXPLAIN) can run here. Tap Edit on the database screen to change it." = "Aquí solo se pueden ejecutar sentencias de solo lectura (SELECT, PRAGMA de solo lectura, EXPLAIN). Toca “Editar” en la pantalla de la base de datos para cambiarla.";
@@ -810,7 +810,7 @@
 "The edited copy failed SQLite's integrity check, so nothing was saved: %@" = "La copia editada no ha superado la comprobación de integridad de SQLite, así que no se ha guardado nada: %@";
 "The row is gone." = "La fila ya no existe.";
 "Unsaved changes" = "Cambios sin guardar";
-"You change WQ Files' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "Estás cambiando la copia de WQ Files: edita un valor tocándolo en una fila, elimina filas deslizando o ejecuta SQL. Nada llega a la app hasta que tocas “Guardar”.\n\nAntes de guardar, fuerza el cierre de la app (desliza hacia arriba en el selector de apps): guardar mientras está en ejecución puede dañar sus datos. La base de datos anterior se conserva en “Copias de seguridad”.";
+"You change DM FILES' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups." = "Estás cambiando la copia de DM FILES: edita un valor tocándolo en una fila, elimina filas deslizando o ejecuta SQL. Nada llega a la app hasta que tocas “Guardar”.\n\nAntes de guardar, fuerza el cierre de la app (desliza hacia arriba en el selector de apps): guardar mientras está en ejecución puede dañar sus datos. La base de datos anterior se conserva en “Copias de seguridad”.";
 "%@ is not a folder anymore." = "%@ ya no es una carpeta.";
 "%@ is removed from Backups and can't be restored anymore." = "%@ se elimina de Copias de seguridad y ya no se podrá restaurar.";
 "%lu backed-up files are removed from Backups (including files deleted or overwritten at the same time) and can't be restored anymore." = "%lu archivos respaldados se eliminan de Copias de seguridad (incluidos los archivos eliminados o sobrescritos al mismo tiempo) y ya no se podrán restaurar.";
@@ -823,17 +823,17 @@
 "Checking the App Group…" = "Comprobando el App Group…";
 "Continue" = "Continuar";
 "Continue Anyway" = "Continuar de todos modos";
-"Continue Anyway opens WQ Files as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "“Continuar de todos modos” abre WQ Files tal cual: las listas pueden estar vacías o ser incorrectas, y no se debe restaurar ni eliminar nada basándose en ellas.";
+"Continue Anyway opens DM FILES as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them." = "“Continuar de todos modos” abre DM FILES tal cual: las listas pueden estar vacías o ser incorrectas, y no se debe restaurar ni eliminar nada basándose en ellas.";
 "Continue Anyway?" = "¿Continuar de todos modos?";
 "Copy Original Path" = "Copiar ruta original";
 "Delete All" = "Eliminar todo";
 "Delete Permanently" = "Eliminar definitivamente";
 "Delete Permanently?" = "¿Eliminar definitivamente?";
-"Files WQ Files deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "Archivos que WQ Files eliminó, a partir de sus copias en Copias de seguridad. “Restaurar” devuelve un archivo a su lugar (se crean las carpetas que falten); “Eliminar definitivamente” lo quita de Copias de seguridad. Mantén pulsado para ver todas las opciones.";
+"Files DM FILES deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options." = "Archivos que DM FILES eliminó, a partir de sus copias en Copias de seguridad. “Restaurar” devuelve un archivo a su lugar (se crean las carpetas que falten); “Eliminar definitivamente” lo quita de Copias de seguridad. Mantén pulsado para ver todas las opciones.";
 "Finding other apps' folders…" = "Buscando las carpetas de otras apps…";
 "Lists may be empty or wrong. Don't restore, clean or delete anything based on them." = "Las listas pueden estar vacías o ser incorrectas. No restaures, limpies ni elimines nada basándote en ellas.";
 "Looking through Backups…" = "Revisando Copias de seguridad…";
-"Missing: the tool that signed WQ Files removed it. Re-install with AltStore, SideStore or Impactor." = "Falta: la herramienta que firmó WQ Files lo eliminó. Vuelve a instalar con AltStore, SideStore o Impactor.";
+"Missing: the tool that signed DM FILES removed it. Re-install with AltStore, SideStore or Impactor." = "Falta: la herramienta que firmó DM FILES lo eliminó. Vuelve a instalar con AltStore, SideStore o Impactor.";
 "Needs sandbox access." = "Requiere acceso al sandbox.";
 "Needs the App Group." = "Requiere el App Group.";
 "None of %lu sampled app folders could be opened: the sandbox escape doesn't work on iOS %@." = "No se pudo abrir ninguna de las %lu carpetas de apps de muestra: el escape del sandbox no funciona en iOS %@.";
@@ -841,7 +841,7 @@
 "Not everything works here" = "No todo funciona aquí";
 "Nothing deleted" = "No se ha eliminado nada";
 "Nothing to check." = "Nada que comprobar.";
-"Only WQ Files' own folder was found (%lu in total)." = "Solo se ha encontrado la carpeta propia de WQ Files (%lu en total).";
+"Only DM FILES' own folder was found (%lu in total)." = "Solo se ha encontrado la carpeta propia de DM FILES (%lu en total).";
 "Other apps' folders" = "Carpetas de otras apps";
 "Put %@ back in\n%@?" = "¿Devolver %@ a\n%@?";
 "Recently Deleted" = "Eliminado recientemente";
@@ -850,9 +850,9 @@
 "The scan for them was declined; Apps and the Cache Cleaner stay empty until it runs." = "Se ha rechazado el análisis; Apps y el Limpiador de caché seguirán vacíos hasta que se ejecute.";
 "They can't be found on this device (see Log for the reason)." = "No se encuentran en este dispositivo (consulta el Log para ver el motivo).";
 "Try Again" = "Reintentar";
-"WQ Files can't work properly here" = "WQ Files no puede funcionar correctamente aquí";
-"WQ Files stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "WQ Files se ha detenido aquí en lugar de mostrar listas vacías o incorrectas. Una nueva versión de iOS puede bloquear su acceso al sandbox; envía el Log indicando tu dispositivo y tu versión de iOS.";
-"iOS %@ hasn't been tested with this version of WQ Files." = "iOS %@ no se ha probado con esta versión de WQ Files.";
+"DM FILES can't work properly here" = "DM FILES no puede funcionar correctamente aquí";
+"DM FILES stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version." = "DM FILES se ha detenido aquí en lugar de mostrar listas vacías o incorrectas. Una nueva versión de iOS puede bloquear su acceso al sandbox; envía el Log indicando tu dispositivo y tu versión de iOS.";
+"iOS %@ hasn't been tested with this version of DM FILES." = "iOS %@ no se ha probado con esta versión de DM FILES.";
 "iOS version" = "Versión de iOS";
 "Explore" = "Explorar";
 "Advanced" = "Avanzado";
@@ -860,3 +860,16 @@
 "Show Hidden Apps" = "Mostrar apps ocultas";
 "Show Only Apps" = "Mostrar solo apps";
 "%lu apps · %lu hidden" = "%lu apps · %lu ocultas";
+"Appearance" = "Apariencia";
+"About" = "Acerca de";
+"Help" = "Ayuda";
+"Credits" = "Créditos";
+"Version" = "Versión";
+"Theme" = "Tema";
+"System" = "Sistema";
+"Light" = "Claro";
+"Dark" = "Oscuro";
+"Glass Effect" = "Efecto cristal";
+"Colored Icons" = "Iconos de colores";
+"Accent Color" = "Color de acento";
+"Reset Appearance" = "Restablecer apariencia";
