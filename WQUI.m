@@ -462,7 +462,7 @@ void wq_style_cell(UITableViewCell *cell)
         return;
     }
     cell.configurationUpdateHandler = ^(UITableViewCell *c, UICellConfigurationState *state) {
-        UIBackgroundConfiguration *bg = [[UIBackgroundConfiguration listGroupedCellConfiguration] updatedConfigurationForState:state];
+        UIBackgroundConfiguration *bg = [[UIBackgroundConfiguration listCellConfiguration] updatedConfigurationForState:state];
         bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
         bg.backgroundColor = (state.highlighted || state.selected) ? [UIColor.labelColor colorWithAlphaComponent:0.10]
                                                                          : UIColor.clearColor;
