@@ -1440,6 +1440,15 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
         })];
     }
 
+    BOOL applied = [patch[@"applied"] boolValue];
+    if (!applied && wq_deleting_allowed()) {
+        [sheet addAction:wq_alert_action(WQLocalized(@"Delete Patch"), UIAlertActionStyleDestructive,
+                                         ^(UIAlertAction *__unused a) {
+            [NSFileManager.defaultManager removeItemAtPath:patch[@"folder"] error:nil];
+            [weakSelf reload];
+        })];
+    }
+
     [sheet addAction:wq_alert_action(WQLocalized(@"Cancel"), UIAlertActionStyleCancel, nil)];
     sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:ip];
     [self presentViewController:sheet animated:YES completion:nil];
