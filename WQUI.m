@@ -7,6 +7,8 @@
 #import "WQUI.h"
 #import "WQAccess.h"
 #import "WQArchive.h"
+#import "WQApps.h"
+#import "WQDir.h"
 #import "WQLaunchServices.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <fcntl.h>
@@ -934,37 +936,398 @@ static NSString *wq_patch_restore(NSDictionary *patch)
     return nil;
 }
 
-// ---- Patch wizard state ------------------------------------------------
-// Shared by "Crear parche" and "Editar parche". Carries the step-by-step
-// form values across the multi-stage UIAlertController sequence.
-@interface WQPatchWizardState : NSObject
-@property (nonatomic, copy)   NSString *patchName;       // step 1
-@property (nonatomic, copy)   NSString *bundleID;        // step 2
-@property (nonatomic, copy)   NSString *targetPath;      // step 3
-@property (nonatomic, strong) NSURL    *pickedFileURL;   // step 4 (security-scoped)
-// When editing an existing patch: folder path and existing source filename.
+// ---- Single-screen patch form ------------------------------------------
+// WQPatchFormViewController: one UITableViewController with all fields in one
+// place. Used for both create and edit. Presented modally from WQPatchesViewController.
+
+@protocol WQPatchFormDelegate <NSObject>
+- (void)patchFormDidFinish;
+@end
+
+typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
+    WQPatchFormRowName = 0,
+    WQPatchFormRowBundleID,
+    WQPatchFormRowTargetPath,
+    WQPatchFormRowFile,
+    WQPatchFormRowCount,
+};
+
+@interface WQPatchFormViewController : UITableViewController
+                                      <UIDocumentPickerDelegate,
+                                       WQPatchRoutePickerDelegate>
+@property (nonatomic, weak) id<WQPatchFormDelegate> delegate;
+// Pre-fill for create-from-route:
+@property (nonatomic, copy, nullable) NSString *prefilledTargetPath;
+@property (nonatomic, copy, nullable) NSString *prefilledBundleID;
+// Pre-fill for edit:
 @property (nonatomic, copy, nullable) NSString *editingFolder;
 @property (nonatomic, copy, nullable) NSString *existingSourceName;
 @end
-@implementation WQPatchWizardState @end
+
+@implementation WQPatchFormViewController {
+    UITextField *_nameField;
+    UITextField *_bundleIDField;
+    UITextField *_targetPathField;
+    UILabel     *_fileLabel;    // shows the picked filename
+    NSURL       *_pickedFileURL;
+}
+
+- (instancetype)init
+{
+    return [super initWithStyle:UITableViewStyleInsetGrouped];
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    BOOL editing = (_editingFolder != nil);
+    self.title = editing ? @"Editar parche" : @"Crear parche";
+    wq_style_table(self.tableView);
+
+    self.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                                                      target:self
+                                                      action:@selector(cancel)];
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave
+                                                      target:self
+                                                      action:@selector(save)];
+}
+
+- (void)cancel
+{
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+// ---- Table structure ---------------------------------------------------
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 1; }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s
+{
+    return (NSInteger)WQPatchFormRowCount;
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s
+{
+    return nil;
+}
+
+- (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)s
+{
+    return @"La ruta destino debe empezar con Documents/, Library/ o tmp/. "
+            "El archivo se copiará con el nombre del último componente de esa ruta.";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    UITableViewCell *cell =
+        [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    wq_style_cell(cell);
+    UIListContentConfiguration *c = cell.defaultContentConfiguration;
+
+    switch ((WQPatchFormRow)indexPath.row) {
+
+        case WQPatchFormRowName: {
+            c.text = @"Nombre";
+            cell.contentConfiguration = c;
+            UITextField *tf = [self makeTextField:@"Mi parche FreeFire"
+                                             text:_nameField.text ?: (_editingFolder ? _editingFolder.lastPathComponent : nil)];
+            tf.returnKeyType = UIReturnKeyNext;
+            [tf addTarget:self action:@selector(nameFieldChanged:) forControlEvents:UIControlEventEditingChanged];
+            [tf addTarget:self action:@selector(focusBundleID) forControlEvents:UIControlEventEditingDidEndOnExit];
+            _nameField = tf;
+            cell.accessoryView = tf;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+
+        case WQPatchFormRowBundleID: {
+            c.text = @"Bundle ID";
+            cell.contentConfiguration = c;
+            UITextField *tf = [self makeTextField:@"com.dts.freefireth"
+                                             text:_bundleIDField.text ?: _prefilledBundleID];
+            tf.keyboardType              = UIKeyboardTypeURL;
+            tf.autocapitalizationType    = UITextAutocapitalizationTypeNone;
+            tf.autocorrectionType        = UITextAutocorrectionTypeNo;
+            tf.returnKeyType             = UIReturnKeyNext;
+            [tf addTarget:self action:@selector(focusTargetPath) forControlEvents:UIControlEventEditingDidEndOnExit];
+            _bundleIDField = tf;
+            cell.accessoryView = tf;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+
+        case WQPatchFormRowTargetPath: {
+            c.text = @"Ruta destino";
+            cell.contentConfiguration = c;
+            UITextField *tf = [self makeTextField:@"Documents/…/archivo.bundle"
+                                             text:_targetPathField.text ?: _prefilledTargetPath];
+            tf.keyboardType              = UIKeyboardTypeURL;
+            tf.autocapitalizationType    = UITextAutocapitalizationTypeNone;
+            tf.autocorrectionType        = UITextAutocorrectionTypeNo;
+            tf.returnKeyType             = UIReturnKeyDone;
+            _targetPathField = tf;
+
+            // "Buscar ruta" button inside the cell's content area
+            UIButton *browseBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            [browseBtn setTitle:@"Buscar ruta" forState:UIControlStateNormal];
+            browseBtn.titleLabel.font = [UIFont systemFontOfSize:14];
+            [browseBtn addTarget:self action:@selector(browseRoute)
+                forControlEvents:UIControlEventTouchUpInside];
+            [browseBtn sizeToFit];
+            cell.accessoryView = browseBtn;
+
+            // Target path text field goes below the label — use a custom subview layout
+            cell.contentConfiguration = nil;
+            UILabel *lbl = [[UILabel alloc] init];
+            lbl.text = @"Ruta destino";
+            lbl.font = [UIFont systemFontOfSize:17];
+            lbl.translatesAutoresizingMaskIntoConstraints = NO;
+            tf.translatesAutoresizingMaskIntoConstraints = NO;
+            tf.font = [UIFont systemFontOfSize:14];
+            tf.textColor = UIColor.secondaryLabelColor;
+            [cell.contentView addSubview:lbl];
+            [cell.contentView addSubview:tf];
+            [NSLayoutConstraint activateConstraints:@[
+                [lbl.leadingAnchor constraintEqualToAnchor:cell.contentView.layoutMarginsGuide.leadingAnchor],
+                [lbl.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+                [tf.leadingAnchor constraintEqualToAnchor:lbl.trailingAnchor constant:8],
+                [tf.trailingAnchor constraintEqualToAnchor:cell.contentView.layoutMarginsGuide.trailingAnchor],
+                [tf.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+            ]];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            break;
+        }
+
+        case WQPatchFormRowFile: {
+            NSString *fileName = _pickedFileURL.lastPathComponent
+                ?: _existingSourceName
+                ?: @"Ninguno";
+            c.text             = @"Archivo";
+            c.secondaryText    = fileName;
+            c.image            = [UIImage systemImageNamed:@"doc.fill"];
+            cell.contentConfiguration = c;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
+
+        case WQPatchFormRowCount: break;
+    }
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tv deselectRowAtIndexPath:indexPath animated:YES];
+    if ((WQPatchFormRow)indexPath.row == WQPatchFormRowFile) {
+        [self pickFile];
+    }
+}
+
+// ---- Helpers -----------------------------------------------------------
+
+- (UITextField *)makeTextField:(NSString *)placeholder text:(NSString *_Nullable)text
+{
+    UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 200, 34)];
+    tf.placeholder       = placeholder;
+    tf.text              = text;
+    tf.clearButtonMode   = UITextFieldViewModeWhileEditing;
+    tf.textAlignment     = NSTextAlignmentRight;
+    tf.font              = [UIFont systemFontOfSize:17];
+    return tf;
+}
+
+- (void)nameFieldChanged:(UITextField *)tf   { /* live validation hook if needed */ }
+- (void)focusBundleID  { [_bundleIDField becomeFirstResponder]; }
+- (void)focusTargetPath { [_targetPathField becomeFirstResponder]; }
+
+// ---- "Buscar ruta" -----------------------------------------------------
+
+- (void)browseRoute
+{
+    // Push the Apps list; when the user taps a file in a data folder,
+    // patchRoutePickerDidSelectPath:bundleID: is called back on us.
+    WQAppsViewController *apps = [WQAppsViewController new];
+    apps.patchRoutePickerDelegate = self;
+    apps.navigationItem.prompt = @"Selecciona el archivo destino del parche";
+    [self.navigationController pushViewController:apps animated:YES];
+}
+
+- (void)patchRoutePickerDidSelectPath:(NSString *)relativePath
+                             bundleID:(NSString *)bundleID
+{
+    // Called from WQDirViewController when the user picks a file.
+    _targetPathField.text = relativePath;
+    _bundleIDField.text   = bundleID;
+    // Pop back to this form.
+    [self.navigationController popToViewController:self animated:YES];
+    [self.tableView reloadData];
+}
+
+// ---- File picker -------------------------------------------------------
+
+- (void)pickFile
+{
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]
+                                                                    asCopy:YES];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)__unused c
+didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+    _pickedFileURL = urls.firstObject;
+    [self.tableView reloadRowsAtIndexPaths:
+        @[[NSIndexPath indexPathForRow:(NSInteger)WQPatchFormRowFile inSection:0]]
+                          withRowAnimation:UITableViewRowAnimationAutomatic];
+}
+
+// ---- Save --------------------------------------------------------------
+
+- (void)save
+{
+    NSString *name = [_nameField.text stringByTrimmingCharactersInSet:
+                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *bid  = [_bundleIDField.text stringByTrimmingCharactersInSet:
+                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *path = [_targetPathField.text stringByTrimmingCharactersInSet:
+                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+
+    if (!name.length) {
+        wq_alert(self, @"Crear parche", @"El nombre no puede estar vacío.");
+        return;
+    }
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_"];
+    if (!bid.length || ![bid containsString:@"."]
+        || [bid rangeOfCharacterFromSet:allowed.invertedSet].location != NSNotFound) {
+        wq_alert(self, @"Crear parche", @"Bundle ID inválido. Ej: com.dts.freefireth");
+        return;
+    }
+    if (!path.length
+        || (!([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"]))) {
+        wq_alert(self, @"Crear parche",
+                 @"La ruta debe empezar con Documents/, Library/ o tmp/.");
+        return;
+    }
+
+    BOOL editing = (_editingFolder != nil);
+    if (!editing && !_pickedFileURL) {
+        wq_alert(self, @"Crear parche", @"Selecciona un archivo para el parche.");
+        return;
+    }
+
+    __block NSString *sourceName = path.lastPathComponent;
+    if (!sourceName.length) sourceName = @"file";
+
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *folder;
+    if (editing) {
+        folder = _editingFolder;
+    } else {
+        NSString *dir  = wq_patches_root();
+        NSString *safe = [name stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+        NSString *candidate = [dir stringByAppendingPathComponent:safe];
+        NSString *finalName = safe;
+        for (NSUInteger n = 2; [fm fileExistsAtPath:candidate]; n++) {
+            finalName   = [NSString stringWithFormat:@"%@ %lu", safe, (unsigned long)n];
+            candidate   = [dir stringByAppendingPathComponent:finalName];
+        }
+        folder = candidate;
+    }
+
+    NSURL *pickedURL = _pickedFileURL;
+    NSString *existingSource = _existingSourceName;
+
+    // Disable save button while writing.
+    self.navigationItem.rightBarButtonItem.enabled = NO;
+    __weak typeof(self) weakSelf = self;
+
+    dispatch_async(wq_io(), ^{
+        NSString *errorMsg = nil;
+        [fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+
+        if (pickedURL) {
+            NSString *destFile = [folder stringByAppendingPathComponent:sourceName];
+            if (editing && existingSource && ![existingSource isEqualToString:sourceName])
+                [fm removeItemAtPath:[folder stringByAppendingPathComponent:existingSource] error:nil];
+            [fm removeItemAtPath:destFile error:nil];
+            BOOL scoped = [pickedURL startAccessingSecurityScopedResource];
+            NSError *copyErr = nil;
+            [fm copyItemAtPath:pickedURL.path toPath:destFile error:&copyErr];
+            if (scoped) [pickedURL stopAccessingSecurityScopedResource];
+            if (copyErr) errorMsg = copyErr.localizedDescription;
+        } else {
+            // Editing with no new file picked: keep existing source filename.
+            sourceName = existingSource ?: sourceName;
+        }
+
+        if (!errorMsg) {
+            NSDictionary *patchJSON = @{
+                @"name":     name,
+                @"bundleID": bid,
+                @"files":    @[@{@"source": sourceName, @"target": path}]
+            };
+            NSData *data = [NSJSONSerialization dataWithJSONObject:patchJSON
+                                                           options:NSJSONWritingPrettyPrinted
+                                                                 | NSJSONWritingWithoutEscapingSlashes
+                                                             error:nil];
+            if (![data writeToFile:[folder stringByAppendingPathComponent:@"patch.json"]
+                        atomically:YES])
+                errorMsg = @"No se pudo guardar patch.json.";
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(self) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.navigationItem.rightBarButtonItem.enabled = YES;
+            if (errorMsg) {
+                wq_alert(strongSelf, @"Error al guardar", errorMsg);
+            } else {
+                [strongSelf.delegate patchFormDidFinish];
+                [strongSelf dismissViewControllerAnimated:YES completion:nil];
+            }
+        });
+    });
+}
+
+@end
+
 // ------------------------------------------------------------------------
 
-// Three distinct document picker modes, routed through one delegate:
+// Two distinct document picker modes for WQPatchesViewController itself:
 typedef NS_ENUM(NSInteger, WQPickerMode) {
-    WQPickerModeImportDM,   // "Importar parche (.dm)"  — picks a .dm file
-    WQPickerModeWizardFile, // "Crear / editar parche"  — picks the payload file
+    WQPickerModeImportDM,   // "Importar parche (.dm)" — picks a .dm file
 };
 
-@interface WQPatchesViewController () <UIDocumentPickerDelegate>
+@interface WQPatchesViewController () <UIDocumentPickerDelegate, WQPatchFormDelegate>
 @end
 
 @implementation WQPatchesViewController {
     NSArray<NSDictionary *> *_patches;   // folder, name, bundleID, files, applied  |  folder, name, error
     WQPickerMode              _pickerMode;
-    WQPatchWizardState       *_wizard;   // non-nil during the create/edit flow
+    // Pre-filled from "Crear parche en esta ruta" in WQDirViewController:
+    NSString *_prefilledTargetPath;
+    NSString *_prefilledBundleID;
 }
 
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (instancetype)init
+{
+    return [super initWithStyle:UITableViewStyleInsetGrouped];
+}
+
+- (instancetype)initWithPrefilledPath:(nullable NSString *)targetPath
+                             bundleID:(nullable NSString *)bundleID
+{
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
+        _prefilledTargetPath = [targetPath copy];
+        _prefilledBundleID   = [bundleID copy];
+    }
+    return self;
+}
 
 // ---- viewDidLoad -------------------------------------------------------
 
@@ -985,7 +1348,7 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
         [UIAction actionWithTitle:@"Crear parche"
                             image:[UIImage systemImageNamed:@"plus.app.fill"]
                        identifier:nil
-                          handler:^(UIAction *__unused a) { [weakSelf wizardCreate]; }];
+                          handler:^(UIAction *__unused a) { [weakSelf openCreateForm:nil]; }];
 
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
@@ -999,6 +1362,20 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     [super viewWillAppear:animated];
     wq_style_table(self.tableView);
     [self reload];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    // When pushed with a pre-filled path (from "Crear parche en esta ruta"),
+    // open the form immediately — only once.
+    if (_prefilledTargetPath) {
+        NSString *path = _prefilledTargetPath;
+        NSString *bid  = _prefilledBundleID;
+        _prefilledTargetPath = nil;
+        _prefilledBundleID   = nil;
+        [self openCreateFormWithPath:path bundleID:bid editingPatch:nil];
+    }
 }
 
 - (void)reload
@@ -1113,235 +1490,40 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     return nil;
 }
 
-// ---- Create / Edit wizard ----------------------------------------------
+// ---- Create / Edit form ------------------------------------------------
 
-- (void)wizardCreate
+- (void)openCreateForm:(NSDictionary *_Nullable)patch
 {
-    _wizard = [WQPatchWizardState new];
-    [self wizardStep1];
+    [self openCreateFormWithPath:nil bundleID:nil editingPatch:patch];
 }
 
-- (void)wizardEdit:(NSDictionary *)patch
+- (void)openCreateFormWithPath:(NSString *_Nullable)targetPath
+                      bundleID:(NSString *_Nullable)bundleID
+                  editingPatch:(NSDictionary *_Nullable)patch
 {
-    _wizard = [WQPatchWizardState new];
-    _wizard.editingFolder      = patch[@"folder"];
-    _wizard.patchName          = patch[@"name"];
-    _wizard.bundleID           = patch[@"bundleID"];
-    NSDictionary *firstFile    = [patch[@"files"] firstObject];
-    _wizard.targetPath         = firstFile[@"target"];
-    _wizard.existingSourceName = firstFile[@"source"];
-    [self wizardStep1];
-}
-
-// Step 1 — patch name
-- (void)wizardStep1
-{
-    UIAlertController *alert =
-        wq_alert_controller(@"Nombre del parche", @"Ej: Mi parche FreeFire",
-                            UIAlertControllerStyleAlert);
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder       = @"Mi parche FreeFire";
-        tf.autocapitalizationType = UITextAutocapitalizationTypeSentences;
-        tf.text              = self->_wizard.patchName;
-        tf.clearButtonMode   = UITextFieldViewModeWhileEditing;
-    }];
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        NSString *name = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
-                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!name.length) { [weakSelf wizardStep1]; return; }
-        __strong typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_wizard.patchName = name;
-        [strongSelf wizardStep2];
-    })];
-    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-// Step 2 — bundle ID
-- (void)wizardStep2
-{
-    UIAlertController *alert =
-        wq_alert_controller(@"Bundle ID", @"Ej: com.dts.freefireth",
-                            UIAlertControllerStyleAlert);
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder               = @"com.dts.freefireth";
-        tf.autocorrectionType        = UITextAutocorrectionTypeNo;
-        tf.autocapitalizationType    = UITextAutocapitalizationTypeNone;
-        tf.keyboardType              = UIKeyboardTypeURL;
-        tf.text                      = self->_wizard.bundleID;
-        tf.clearButtonMode           = UITextFieldViewModeWhileEditing;
-    }];
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        [weakSelf wizardStep1];
-    })];
-    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        NSString *bid = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
-                         NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
-            @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_"];
-        BOOL valid = bid.length > 0
-                     && [bid containsString:@"."]
-                     && [bid rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
-        if (!valid) { [weakSelf wizardStep2]; return; }
-        __strong typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_wizard.bundleID = bid;
-        [strongSelf wizardStep3];
-    })];
-    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-// Step 3 — target path
-- (void)wizardStep3
-{
-    UIAlertController *alert =
-        wq_alert_controller(@"Ruta destino",
-                            @"Ej: Documents/contentcache/Optional/archivo.bundle",
-                            UIAlertControllerStyleAlert);
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder            = @"Documents/…/archivo.bundle";
-        tf.autocorrectionType     = UITextAutocorrectionTypeNo;
-        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        tf.text                   = self->_wizard.targetPath;
-        tf.clearButtonMode        = UITextFieldViewModeWhileEditing;
-    }];
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        [weakSelf wizardStep2];
-    })];
-    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        NSString *path = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
-                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        BOOL valid = path.length > 0
-                     && ([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"]);
-        if (!valid) { [weakSelf wizardStep3]; return; }
-        __strong typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_wizard.targetPath = path;
-        [strongSelf wizardStep4];
-    })];
-    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-// Step 4 — select file
-- (void)wizardStep4
-{
-    BOOL editing = (_wizard.editingFolder != nil);
-    NSString *msg = editing && _wizard.existingSourceName
-        ? [NSString stringWithFormat:@"Archivo actual: %@\nSelecciona uno nuevo para reemplazarlo, o toca Omitir.",
-           _wizard.existingSourceName]
-        : @"Se copiará con el nombre del componente final de la ruta destino.";
-
-    UIAlertController *alert =
-        wq_alert_controller(@"Seleccionar archivo", msg, UIAlertControllerStyleAlert);
-    __weak typeof(self) weakSelf = self;
-
-    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        [weakSelf wizardStep3];
-    })];
-
-    if (editing && _wizard.existingSourceName) {
-        [alert addAction:wq_alert_action(@"Omitir (mantener archivo actual)", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-            [weakSelf wizardFinish];
-        })];
-    }
-
-    [alert addAction:wq_alert_action(@"Elegir archivo…", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        __strong typeof(self) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        strongSelf->_pickerMode = WQPickerModeWizardFile;
-        UIDocumentPickerViewController *picker =
-            [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
-        picker.delegate = strongSelf;
-        [strongSelf presentViewController:picker animated:YES completion:nil];
-    })];
-
-    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-// Final write — creates or overwrites the patch folder and patch.json.
-- (void)wizardFinish
-{
-    NSFileManager *fm = NSFileManager.defaultManager;
-    WQPatchWizardState *w = _wizard;
-
-    // Destination source filename = last path component of the target path.
-    __block NSString *sourceName = w.targetPath.lastPathComponent;
-    if (!sourceName.length) sourceName = @"file";
-
-    NSString *folder;
-    if (w.editingFolder) {
-        folder = w.editingFolder;
+    WQPatchFormViewController *form = [WQPatchFormViewController new];
+    form.delegate = self;
+    if (patch) {
+        form.editingFolder      = patch[@"folder"];
+        form.existingSourceName = [patch[@"files"] firstObject][@"source"];
+        form.prefilledTargetPath = [patch[@"files"] firstObject][@"target"];
+        form.prefilledBundleID   = patch[@"bundleID"];
+        // Name pre-fill via the editingFolder's last path component
+        // is handled inside WQPatchFormViewController.cellForRowAtIndexPath.
     } else {
-        NSString *dir = wq_patches_root();
-        NSString *name = w.patchName;
-        // Sanitize folder name: strip path separators.
-        name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
-        NSString *candidate = [dir stringByAppendingPathComponent:name];
-        NSString *finalName = name;
-        for (NSUInteger n = 2; [fm fileExistsAtPath:candidate]; n++) {
-            finalName = [NSString stringWithFormat:@"%@ %lu", name, (unsigned long)n];
-            candidate = [dir stringByAppendingPathComponent:finalName];
-        }
-        folder = candidate;
+        form.prefilledTargetPath = targetPath;
+        form.prefilledBundleID   = bundleID;
     }
+    UINavigationController *nav =
+        [[UINavigationController alloc] initWithRootViewController:form];
+    nav.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:nav animated:YES completion:nil];
+}
 
-    dispatch_async(wq_io(), ^{
-        NSString *errorMsg = nil;
-
-        [fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
-
-        // Copy the picked file into the patch folder (if a new one was selected).
-        if (w.pickedFileURL) {
-            NSString *destFile = [folder stringByAppendingPathComponent:sourceName];
-            // If editing and the source name changed, remove the old file.
-            if (w.editingFolder && w.existingSourceName
-                && ![w.existingSourceName isEqualToString:sourceName]) {
-                [fm removeItemAtPath:[folder stringByAppendingPathComponent:w.existingSourceName]
-                               error:nil];
-            }
-            [fm removeItemAtPath:destFile error:nil];
-            BOOL scoped = [w.pickedFileURL startAccessingSecurityScopedResource];
-            NSError *copyErr = nil;
-            [fm copyItemAtPath:w.pickedFileURL.path toPath:destFile error:&copyErr];
-            if (scoped) [w.pickedFileURL stopAccessingSecurityScopedResource];
-            if (copyErr) errorMsg = copyErr.localizedDescription;
-        } else if (!w.editingFolder) {
-            // No file picked and not editing — shouldn't reach here, but guard anyway.
-            errorMsg = @"No se seleccionó ningún archivo.";
-        } else {
-            // Editing with "Omitir": keep the existing source file, update source name.
-            sourceName = w.existingSourceName ?: sourceName;
-        }
-
-        if (!errorMsg) {
-            NSDictionary *patchJSON = @{
-                @"name":     w.patchName,
-                @"bundleID": w.bundleID,
-                @"files":    @[@{@"source": sourceName, @"target": w.targetPath}]
-            };
-            NSData *data = [NSJSONSerialization dataWithJSONObject:patchJSON
-                                                           options:NSJSONWritingPrettyPrinted
-                                                                   | NSJSONWritingWithoutEscapingSlashes
-                                                             error:nil];
-            if (![data writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES])
-                errorMsg = @"No se pudo guardar patch.json.";
-        }
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self->_wizard = nil;
-            if (errorMsg) {
-                wq_alert(self, @"Error al crear parche", errorMsg);
-            }
-            [self reload];
-        });
-    });
+// WQPatchFormDelegate
+- (void)patchFormDidFinish
+{
+    [self reload];
 }
 
 // ---- UIDocumentPickerDelegate ------------------------------------------
@@ -1351,23 +1533,9 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
     NSURL *url = urls.firstObject;
     if (!url) return;
-
-    switch (_pickerMode) {
-        case WQPickerModeImportDM:
-            [self handleImportDMAtURL:url];
-            break;
-        case WQPickerModeWizardFile:
-            _wizard.pickedFileURL = url;
-            [self wizardFinish];
-            break;
-    }
-}
-
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)__unused controller
-{
-    // If we were in a wizard file step, go back to step 4 so the user can retry.
-    if (_pickerMode == WQPickerModeWizardFile && _wizard) {
-        [self wizardStep4];
+    // WQPatchesViewController only uses the picker for .dm import.
+    if (_pickerMode == WQPickerModeImportDM) {
+        [self handleImportDMAtURL:url];
     }
 }
 
@@ -1436,7 +1604,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
     if (!patch[@"error"]) {
         [sheet addAction:wq_alert_action(@"Editar parche", UIAlertActionStyleDefault,
                                          ^(UIAlertAction *__unused a) {
-            [weakSelf wizardEdit:patch];
+            [weakSelf openCreateForm:patch];
         })];
     }
 
