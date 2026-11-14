@@ -1150,8 +1150,10 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
         NSString *name = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
                           NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (!name.length) { [weakSelf wizardStep1]; return; }
-        weakSelf->_wizard.patchName = name;
-        [weakSelf wizardStep2];
+        __strong typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_wizard.patchName = name;
+        [strongSelf wizardStep2];
     })];
     [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
     [self presentViewController:alert animated:YES completion:nil];
@@ -1184,8 +1186,10 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
                      && [bid containsString:@"."]
                      && [bid rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
         if (!valid) { [weakSelf wizardStep2]; return; }
-        weakSelf->_wizard.bundleID = bid;
-        [weakSelf wizardStep3];
+        __strong typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_wizard.bundleID = bid;
+        [strongSelf wizardStep3];
     })];
     [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
     [self presentViewController:alert animated:YES completion:nil];
@@ -1215,8 +1219,10 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
         BOOL valid = path.length > 0
                      && ([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"]);
         if (!valid) { [weakSelf wizardStep3]; return; }
-        weakSelf->_wizard.targetPath = path;
-        [weakSelf wizardStep4];
+        __strong typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_wizard.targetPath = path;
+        [strongSelf wizardStep4];
     })];
     [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
     [self presentViewController:alert animated:YES completion:nil];
@@ -1246,11 +1252,13 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     }
 
     [alert addAction:wq_alert_action(@"Elegir archivo…", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        weakSelf->_pickerMode = WQPickerModeWizardFile;
+        __strong typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_pickerMode = WQPickerModeWizardFile;
         UIDocumentPickerViewController *picker =
             [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
-        picker.delegate = weakSelf;
-        [weakSelf presentViewController:picker animated:YES completion:nil];
+        picker.delegate = strongSelf;
+        [strongSelf presentViewController:picker animated:YES completion:nil];
     })];
 
     [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
@@ -1264,7 +1272,7 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     WQPatchWizardState *w = _wizard;
 
     // Destination source filename = last path component of the target path.
-    NSString *sourceName = w.targetPath.lastPathComponent;
+    __block NSString *sourceName = w.targetPath.lastPathComponent;
     if (!sourceName.length) sourceName = @"file";
 
     NSString *folder;
@@ -1391,13 +1399,15 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
                     wq_alert(weakSelf, applying ? @"Error al activar" : @"Error al desactivar", error);
                 } else {
                     // Update the in-memory applied flag so the switch stays consistent.
+                    __strong typeof(self) strongSelf = weakSelf;
+                    if (!strongSelf) return;
                     NSMutableDictionary *updated = [patch mutableCopy];
                     updated[@"applied"] = @(applying);
-                    NSMutableArray *mutable = [weakSelf->_patches mutableCopy];
+                    NSMutableArray *mutable = [strongSelf->_patches mutableCopy];
                     mutable[row] = updated;
-                    weakSelf->_patches = mutable;
+                    strongSelf->_patches = mutable;
                     // Full reload keeps bundles in sync; the switch already reflects the state.
-                    [weakSelf reload];
+                    [strongSelf reload];
                 }
             }];
         });
@@ -1484,7 +1494,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     return _patches.count ? nil :
-        @"Sin parches. Toca + → "Importar parche (.dm)" para añadir uno, o "Crear parche" para construirlo paso a paso.";
+        @"Sin parches. Toca + \u2192 \"Importar parche (.dm)\" para a\u00f1adir uno, o \"Crear parche\" para construirlo paso a paso.";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
