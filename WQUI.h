@@ -79,6 +79,14 @@ UIImage *wq_telegram_icon(CGFloat side);
                              bundleID:(NSString *)bundleID;
 @end
 
+// Category that adds the patch route picker delegate to WQAppsViewController
+// without touching WQApps.h. Declared here so both WQUI.m and main.m see it;
+// implemented (via associated objects) in main.m.
+@class WQAppsViewController;
+@interface WQAppsViewController (WQPatchRoutePicker)
+@property (nonatomic, weak, nullable) id<WQPatchRoutePickerDelegate> patchRoutePickerDelegate;
+@end
+
 // Returns the data container path for the given bundle ID, or nil if not found.
 // Blocking — call off the main thread.
 NSString *_Nullable wq_data_container_for_bundle(NSString *bundleID);
