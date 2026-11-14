@@ -5,6 +5,7 @@
 
 #import <UIKit/UIKit.h>
 #import "WQLocalization.h"
+#import "WQApps.h"   // the category below needs the full WQAppsViewController interface
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -82,7 +83,6 @@ UIImage *wq_telegram_icon(CGFloat side);
 // Category that adds the patch route picker delegate to WQAppsViewController
 // without touching WQApps.h. Declared here so both WQUI.m and main.m see it;
 // implemented (via associated objects) in main.m.
-@class WQAppsViewController;
 @interface WQAppsViewController (WQPatchRoutePicker)
 @property (nonatomic, weak, nullable) id<WQPatchRoutePickerDelegate> patchRoutePickerDelegate;
 @end
