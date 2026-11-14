@@ -70,7 +70,7 @@ NSArray<WQHealthCheck *> *wq_health_run(void (^stage)(NSString *))
     if (stage) stage(WQLocalized(@"Checking the App Group…"));
     NSString *group = wq_app_group();
     [checks addObject:wq_check(@"App Group", group ? WQHealthOK : WQHealthFailed,
-        group ?: WQLocalized(@"Missing: the tool that signed WQ Files removed it. Re-install with AltStore, SideStore or Impactor.")) ];
+        group ?: WQLocalized(@"Missing: the tool that signed DM FILES removed it. Re-install with AltStore, SideStore or Impactor.")) ];
 
     // 2. Other apps' folders.
     if (stage) stage(WQLocalized(@"Finding other apps' folders…"));
@@ -84,7 +84,7 @@ NSArray<WQHealthCheck *> *wq_health_run(void (^stage)(NSString *))
     else if (!containers)
         folders = wq_check(@"Other apps' folders", WQHealthFailed, WQLocalized(@"They can't be found on this device (see Log for the reason)."));
     else if (!sample.count)
-        folders = wq_check(@"Other apps' folders", WQHealthFailed, WQLocalizedFormat(@"Only WQ Files' own folder was found (%lu in total).", (unsigned long)containers.count));
+        folders = wq_check(@"Other apps' folders", WQHealthFailed, WQLocalizedFormat(@"Only DM FILES' own folder was found (%lu in total).", (unsigned long)containers.count));
     else
         folders = wq_check(@"Other apps' folders", WQHealthOK, WQLocalizedFormat(@"%lu found.", (unsigned long)containers.count));
     [checks addObject:folders];
@@ -136,7 +136,7 @@ NSArray<WQHealthCheck *> *wq_health_run(void (^stage)(NSString *))
     // 5. iOS version.
     BOOL tested = os.majorVersion == 26 || os.majorVersion == 27;
     [checks addObject:wq_check(@"iOS version", tested ? WQHealthOK : WQHealthWarning,
-        tested ? osText : WQLocalizedFormat(@"iOS %@ hasn't been tested with this version of WQ Files.", osText))];
+        tested ? osText : WQLocalizedFormat(@"iOS %@ hasn't been tested with this version of DM FILES.", osText))];
 
     NSMutableArray *summary = [NSMutableArray new];
     for (WQHealthCheck *c in checks) [summary addObject:[NSString stringWithFormat:@"%@=%@", c.key,

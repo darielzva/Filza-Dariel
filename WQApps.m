@@ -771,7 +771,7 @@ static void WQAppScanWatch(WQScanCancellation *cancellation, NSUInteger lastSeri
             return a.bytes > b.bytes ? NSOrderedAscending : (a.bytes < b.bytes ? NSOrderedDescending : NSOrderedSame);
         }];
         NSString *note = nil;
-        if (!wq_app_group()) note = WQLocalized(@"WQ Files has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README).");
+        if (!wq_app_group()) note = WQLocalized(@"DM FILES has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README).");
         else if (!containers && wq_full_scan_was_declined()) note = WQLocalized(@"Apps aren't listed yet: this needs a scan of all files. Pull down to start it.");
         else if (!containers) note = WQLocalized(@"Container enumeration failed. See Log for the statfs/inode reason.");
         else if (!containers.count) note = WQLocalized(@"No app containers were found. Refresh, and check Log for the enumeration reason.");
@@ -1248,7 +1248,7 @@ static void WQAppScanWatch(WQScanCancellation *cancellation, NSUInteger lastSeri
     WQAppItem *app = nil;
     for (WQAppItem *candidate in _apps) if ([candidate.bundleID isEqualToString:bid]) { app = candidate; break; }
     if (!app) {
-        wq_alert(self, @"App not found", WQLocalizedFormat(@"%@ isn't installed, or WQ Files can't reach its data. "
+        wq_alert(self, @"App not found", WQLocalizedFormat(@"%@ isn't installed, or DM FILES can't reach its data. "
                  "A backup can only be restored into the installed app: install it, open it once, then try again.", bid));
     } else if (!app.backups.count) {
         wq_alert(self, @"No backup", WQLocalizedFormat(@"There is no complete backup of %@ to restore.", app.name));
@@ -1275,7 +1275,7 @@ static void WQAppScanWatch(WQScanCancellation *cancellation, NSUInteger lastSeri
 {
     NSString *path = backup[@"path"];
     NSString *warning = [backup[@"verified"] boolValue] ? @""
-        : WQLocalizedFormat(@"\n\nThis backup is unverified (%@). WQ Files will re-check its parts before changing anything.", backup[@"reason"] ?: WQLocalized(@"no typed manifest"));
+        : WQLocalizedFormat(@"\n\nThis backup is unverified (%@). DM FILES will re-check its parts before changing anything.", backup[@"reason"] ?: WQLocalized(@"no typed manifest"));
     NSString *body = wq_keep_before_restore()
         ? WQLocalizedFormat(@"Replaces the app's current Documents and Library with the backup from %@; tmp is left untouched. The current data is backed up first, and put back if anything fails. Close the app first: a running app can make the operation non-snapshot-consistent.%@", wq_backup_label(backup), warning)
         : WQLocalizedFormat(@"Replaces the app's current Documents and Library with the backup from %@; tmp is left untouched. The current data is backed up first, and put back if anything fails; after a successful restore that backup is deleted (Keep Data Before Restore is off). Close the app first: a running app can make the operation non-snapshot-consistent.%@", wq_backup_label(backup), warning);

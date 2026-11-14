@@ -896,23 +896,51 @@ NSString *wq_bundle_path_for_id(NSString *bundleID)
     }
 }
 
+// Apple's own apps that have an icon on the home screen. Everything else
+// from Apple in App Data (…UIService, …Host, …Angel, dialogs, remote alerts)
+// is a service.
+static NSSet<NSString *> *wq_visible_apple_apps(void)
+{
+    static NSSet<NSString *> *set;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        set = [NSSet setWithArray:@[
+            @"com.apple.mobilesafari", @"com.apple.MobileSMS", @"com.apple.mobilephone", @"com.apple.facetime",
+            @"com.apple.mobilemail", @"com.apple.mobilecal", @"com.apple.mobilenotes", @"com.apple.reminders",
+            @"com.apple.Maps", @"com.apple.weather", @"com.apple.news", @"com.apple.stocks",
+            @"com.apple.calculator", @"com.apple.compass", @"com.apple.MobileAddressBook", @"com.apple.Music",
+            @"com.apple.tv", @"com.apple.podcasts", @"com.apple.iBooks", @"com.apple.AppStore",
+            @"com.apple.Health", @"com.apple.Home", @"com.apple.Passbook", @"com.apple.Fitness",
+            @"com.apple.shortcuts", @"com.apple.DocumentsApp", @"com.apple.measure", @"com.apple.Translate",
+            @"com.apple.magnifier", @"com.apple.VoiceMemos", @"com.apple.mobiletimer", @"com.apple.Journal",
+            @"com.apple.findmy", @"com.apple.Passwords", @"com.apple.freeform", @"com.apple.tips",
+            @"com.apple.camera", @"com.apple.mobileslideshow", @"com.apple.Preferences", @"com.apple.MobileStore",
+            @"com.apple.Bridge", @"com.apple.store.Jolly", @"com.apple.supportapp", @"com.apple.TestFlight",
+            @"com.apple.clips", @"com.apple.gamecenter", @"com.apple.mobilegarageband", @"com.apple.iMovie",
+            @"com.apple.Keynote", @"com.apple.Pages", @"com.apple.Numbers", @"com.apple.Playgrounds",
+        ]];
+    });
+    return set;
+}
+
 BOOL wq_is_regular_app(NSString *bundleID)
 {
     if (!bundleID.length) return NO;
+    if ([wq_visible_apple_apps() containsObject:bundleID]) return YES;
     @synchronized (wq_ls_lock()) {
         wq_load_ls_names_locked();
         NSString *path = gLSBundlePaths[bundleID];
         if ([path isKindOfClass:NSString.class] && path.length) {
-            if (![path.pathExtension isEqualToString:@"app"]) return NO;     // .appex, frameworks...
-            if ([path hasPrefix:@"/System/Library/"]) return NO;              // CoreServices and friends
-            if ([path componentsSeparatedByString:@".app/"].count > 1) return NO;   // nested app
-            return YES;
+            if (![path.pathExtension isEqualToString:@"app"]) return NO;                  // .appex, frameworks...
+            if ([path componentsSeparatedByString:@".app/"].count > 1) return NO;           // nested app
+            // Anything that ships with iOS is a system app, whatever its name looks like.
+            for (NSString *prefix in @[@"/System/", @"/Applications/", @"/usr/", @"/private/preboot/"])
+                if ([path hasPrefix:prefix]) return NO;
+            return YES;   // installed: App Store, TestFlight or sideloaded
         }
-        // The database knows no bundle path for it. If it knows none at all
-        // (layout not understood), fall back to the id: Apple's own ids are
-        // services unless they are a known app name.
-        if (gLSBundlePaths.count == 0)
-            return ![bundleID hasPrefix:@"com.apple."] || wq_builtin_names()[bundleID] != nil;
+        // No bundle path in the database. If it knows none at all (layout not
+        // understood), fall back to the id: Apple's ids are services.
+        if (gLSBundlePaths.count == 0) return ![bundleID hasPrefix:@"com.apple."];
         return NO;
     }
 }

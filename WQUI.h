@@ -34,4 +34,34 @@ UIView *wq_device_header(CGFloat width);
 NSString *wq_device_line(void);
 UIImage *_Nullable wq_app_icon(NSString *_Nullable bundleID);
 
+// ---- Appearance (Settings → Appearance) ----
+typedef NS_ENUM(NSInteger, WQTheme) { WQThemeSystem = 0, WQThemeLight = 1, WQThemeDark = 2 };
+WQTheme wq_theme(void);
+void wq_set_theme(WQTheme theme);
+// Translucent "glass" cards and a soft gradient behind the lists (on by default).
+BOOL wq_glass_enabled(void);
+void wq_set_glass_enabled(BOOL on);
+// Icons keep their own colors; off = every icon uses the accent color.
+BOOL wq_colored_icons(void);
+void wq_set_colored_icons(BOOL on);
+NSArray<UIColor *> *wq_accent_colors(void);
+NSUInteger wq_accent_index(void);
+void wq_set_accent_index(NSUInteger index);
+UIColor *wq_accent_color(void);
+void wq_reset_appearance(void);
+// Applies theme and accent color to the window (and every other window).
+void wq_apply_appearance(UIWindow *_Nullable window);
+// Gradient behind a table when glass is on; plain system background otherwise.
+void wq_style_table(UITableView *table);
+// Glass background for a cell when glass is on.
+void wq_style_cell(UITableViewCell *cell);
+// A Settings-style icon: white symbol on a rounded colored square.
+UIImage *wq_badge_image(NSString *symbol, UIColor *color);
+UIImage *wq_telegram_icon(CGFloat side);
+
+@interface WQAppearanceViewController : UITableViewController
+@end
+@interface WQAboutViewController : UITableViewController
+@end
+
 NS_ASSUME_NONNULL_END

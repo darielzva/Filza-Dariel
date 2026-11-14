@@ -965,7 +965,7 @@ static void wq_sqlite_bind_typed(sqlite3_stmt *stmt, int index, NSString *text, 
         return;
     }
     UIAlertController *alert = wq_alert_controller(@"Edit database",
-        @"You change WQ Files' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups.",
+        @"You change DM FILES' copy: edit a value by tapping it in a row, delete rows by swiping, or run SQL. Nothing reaches the app until you tap Save.\n\nBefore saving, force-quit the app (swipe it away in the app switcher): saving while it runs can corrupt its data. The previous database is kept in Backups.",
         UIAlertControllerStyleAlert);
     [alert addAction:wq_alert_action(@"Cancel", UIAlertActionStyleCancel, nil)];
     [alert addAction:wq_alert_action(@"Edit", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
@@ -1083,7 +1083,7 @@ static void wq_sqlite_bind_typed(sqlite3_stmt *stmt, int index, NSString *text, 
 {
     if (!_snapshot) return nil;
     if (_snapshot.editing)
-        return WQLocalized(@"Editing WQ Files' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first.");
+        return WQLocalized(@"Editing DM FILES' copy: tap a value in a row to change it, swipe a row to delete it, or use SQL. Save writes the copy to the app; force-quit the app first.");
     NSString *wal = _snapshot.copiedWAL ? WQLocalized(@" and its -wal file") : @"";
     return WQLocalizedFormat(@"Read-only. This is a copy of the database%@ made when it was opened; the app's own file is not changed. Close the app first for an up-to-date copy.", wal);
 }

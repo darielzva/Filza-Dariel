@@ -676,7 +676,7 @@ static void wq_open_file(UINavigationController *nav, NSString *path, BOOL readO
         struct stat st;
         BOOL link = wq_stat(path, &st) && S_ISLNK(st.st_mode);
         if (host) wq_alert(host, link ? @"Symbolic link" : @"Cannot open this item",
-                           link ? @"WQ Files does not follow symbolic links for viewing, sharing or editing."
+                           link ? @"DM FILES does not follow symbolic links for viewing, sharing or editing."
                                 : @"Only regular files can be viewed.");
         return;
     }
@@ -846,6 +846,11 @@ static NSString *wq_temp_work_dir(NSString *prefix)
     BOOL _isAppDataRoot;
     UIBarButtonItem *_hiddenAppsItem;
     NSUInteger _hiddenAppCount;
+    UIView *_headerCard;
+    UIVisualEffectView *_headerBlur;
+    UILabel *_headerTitle;
+    UILabel *_headerSub;
+    UIView *_pathPill;
 }
 
 - (instancetype)initWithPath:(NSString *)path title:(NSString *)title
@@ -985,35 +990,88 @@ static NSString *wq_temp_work_dir(NSString *prefix)
 - (void)updateHeader
 {
     CGFloat width = self.tableView.bounds.size.width ?: self.view.bounds.size.width;
-    if (!_pathLabel) {
+    if (!_headerBox) {
+        _headerBox = wq_device_header(width);
+        _headerCard = [UIView new];
+        _headerCard.layer.cornerRadius = 20;
+        _headerCard.layer.cornerCurve = kCACornerCurveContinuous;
+        _headerCard.clipsToBounds = YES;
+        _headerBlur = [[UIVisualEffectView alloc] initWithEffect:nil];
+        [_headerCard addSubview:_headerBlur];
+
+        _headerTitle = [UILabel new];
+        _headerTitle.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+        _headerTitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        [_headerCard addSubview:_headerTitle];
+
+        _headerSub = [UILabel new];
+        _headerSub.numberOfLines = 0;
+        _headerSub.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+        _headerSub.textColor = UIColor.secondaryLabelColor;
+        [_headerCard addSubview:_headerSub];
+
+        // The path sits in a small pill; tap it to copy.
+        _pathPill = [UIView new];
+        _pathPill.backgroundColor = UIColor.tertiarySystemFillColor;
+        _pathPill.layer.cornerRadius = 12;
+        _pathPill.layer.cornerCurve = kCACornerCurveContinuous;
+        _pathPill.userInteractionEnabled = YES;
+        [_pathPill addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(copyPath)]];
         _pathLabel = [UILabel new];
         _pathLabel.numberOfLines = 0;
-        _pathLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+        _pathLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
         _pathLabel.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
         _pathLabel.textAlignment = NSTextAlignmentLeft;   // paths read left to right in every language
         _pathLabel.textColor = UIColor.secondaryLabelColor;
-        _pathLabel.userInteractionEnabled = YES;
-        [_pathLabel addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(copyPath)]];
-    }
-    if (!_headerBox) {
-        _headerBox = wq_device_header(width);
-        [_headerBox addSubview:_pathLabel];
+        [_pathPill addSubview:_pathLabel];
+        [_headerCard addSubview:_pathPill];
+
+        [_headerBox addSubview:_headerCard];
         self.tableView.tableHeaderView = _headerBox;
     }
-    // Zero-width spaces after each slash let lines break between components.
-    NSString *breakable = [_path stringByReplacingOccurrencesOfString:@"/" withString:@"/\u200B"];
+
+    BOOL glass = wq_glass_enabled();
+    _headerBlur.effect = glass ? [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial] : nil;
+    _headerCard.backgroundColor = glass ? UIColor.clearColor : UIColor.secondarySystemGroupedBackgroundColor;
+    _headerCard.layer.borderWidth = glass ? 0.5 : 0;
+    _headerCard.layer.borderColor = [UIColor.whiteColor colorWithAlphaComponent:0.30].CGColor;
+
+    _headerTitle.text = self.title.length ? self.title : _path.lastPathComponent;
+    NSMutableArray<NSString *> *parts = [NSMutableArray new];
     if (_isAppDataRoot && _all.count) {
-        NSUInteger total = _all.count, apps = total - _hiddenAppCount;
-        breakable = [NSString stringWithFormat:@"%@\n%@", breakable,
-                     WQLocalizedFormat(@"%lu apps · %lu hidden", (unsigned long)apps, (unsigned long)_hiddenAppCount)];
+        NSUInteger apps = _all.count - _hiddenAppCount;
+        [parts addObject:WQLocalizedFormat(@"%lu apps · %lu hidden", (unsigned long)apps, (unsigned long)_hiddenAppCount)];
     }
-    _pathLabel.text = _scanStatus ? [NSString stringWithFormat:@"%@\n%@", breakable, _scanStatus] : breakable;
-    CGFloat side = 16, top = 42;
-    CGSize fit = [_pathLabel sizeThatFits:CGSizeMake(width - 2 * side, CGFLOAT_MAX)];
-    CGFloat height = top + ceil(fit.height) + 10;
+    if (_scanStatus.length) [parts addObject:_scanStatus];
+    _headerSub.text = [parts componentsJoinedByString:@" · "];
+    // Zero-width spaces after each slash let lines break between components.
+    _pathLabel.text = [_path stringByReplacingOccurrencesOfString:@"/" withString:@"/\u200B"];
+
+    const CGFloat outer = 16, pad = 16;
+    CGFloat inner = width - 2 * outer - 2 * pad;
+    CGFloat y = pad;
+    CGFloat titleHeight = ceil([_headerTitle sizeThatFits:CGSizeMake(inner, CGFLOAT_MAX)].height);
+    _headerTitle.frame = CGRectMake(pad, y, inner, titleHeight);
+    y += titleHeight;
+    if (_headerSub.text.length) {
+        CGFloat subHeight = ceil([_headerSub sizeThatFits:CGSizeMake(inner, CGFLOAT_MAX)].height);
+        _headerSub.hidden = NO;
+        _headerSub.frame = CGRectMake(pad, y + 2, inner, subHeight);
+        y += 2 + subHeight;
+    } else {
+        _headerSub.hidden = YES;
+    }
+    y += 12;
+    CGFloat pathHeight = ceil([_pathLabel sizeThatFits:CGSizeMake(inner - 20, CGFLOAT_MAX)].height);
+    _pathPill.frame = CGRectMake(pad, y, inner, pathHeight + 14);
+    _pathLabel.frame = CGRectMake(10, 7, inner - 20, pathHeight);
+    y += pathHeight + 14 + pad;
+    _headerCard.frame = CGRectMake(outer, 8, width - 2 * outer, y);
+    _headerBlur.frame = _headerCard.bounds;
+
+    CGFloat height = 8 + y + 10;
     CGFloat oldHeight = _headerBox.frame.size.height;
     _headerBox.frame = CGRectMake(0, 0, width, height);
-    _pathLabel.frame = CGRectMake(side, top, width - 2 * side, ceil(fit.height));
     _headerWidth = width;
     if (fabs(height - oldHeight) > 0.5) self.tableView.tableHeaderView = _headerBox;
 }
@@ -1736,7 +1794,7 @@ static NSString *wq_temp_work_dir(NSString *prefix)
             [self countChildrenOf:items generation:generation cancellation:cancellation];
             self->_error = (names || childPaths != nil) ? nil
                 : (error.length ? error
-                   : !wq_app_group() ? WQLocalized(@"WQ Files has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README).")
+                   : !wq_app_group() ? WQLocalized(@"DM FILES has no App Group, so it can't open other apps' folders. Re-sign it with a tool that keeps the App Group (see Signing in the README).")
                    : wq_full_scan_was_declined() ? WQLocalized(@"Not listed yet: this needs a scan of all files. Pull down to start it.")
                    : WQLocalized(@"Cannot list this folder. Container enumeration failed; see Log."));
             self->_scanStatus = nil;
@@ -1885,7 +1943,7 @@ static NSString *wq_temp_work_dir(NSString *prefix)
     UIViewController *next;
     if (item.isLink) {
         wq_alert(self, @"Symbolic link",
-                 @"WQ Files does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly.");
+                 @"DM FILES does not follow symbolic links for viewing, sharing or editing. Use Copy Path to open the target explicitly.");
         return;
     }
     if (item.isDir) {
@@ -2493,7 +2551,7 @@ static NSString *const kSystemGroupRoot = @"/private/var/containers/Shared/Syste
 - (NSString *)fullLog
 {
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
-    return WQLocalizedFormat(@"WQ Files %@ (%@)\n%@\n\n%@",
+    return WQLocalizedFormat(@"DM FILES %@ (%@)\n%@\n\n%@",
             info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?", wq_device_line(), wq_log_text());
 }
 
@@ -2653,7 +2711,7 @@ static NSString *wq_deleted_place(NSString *original)
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return WQLocalized(@"Files WQ Files deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options.");
+    return WQLocalized(@"Files DM FILES deleted, from their copies in Backups. Restore puts a file back where it was (missing folders are created); Delete Permanently removes it from Backups. Long-press for all options.");
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -2865,7 +2923,7 @@ static NSString *wq_language_name(NSString *code)
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return section == 1 ? WQLocalized(@"The new language is used the next time WQ Files starts.") : nil;
+    return section == 1 ? WQLocalized(@"The new language is used the next time DM FILES starts.") : nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -2905,8 +2963,8 @@ static NSString *wq_language_name(NSString *code)
         [defaults removeObjectForKey:@"AppleLanguages"];
     }
     [tableView reloadData];
-    UIAlertController *restart = wq_alert_controller(@"Restart WQ Files",
-        @"The new language is used the next time WQ Files starts.", UIAlertControllerStyleAlert);
+    UIAlertController *restart = wq_alert_controller(@"Restart DM FILES",
+        @"The new language is used the next time DM FILES starts.", UIAlertControllerStyleAlert);
     [restart addAction:wq_alert_action(@"Later", UIAlertActionStyleCancel, nil)];
     [restart addAction:wq_alert_action(@"Quit Now", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
         [NSUserDefaults.standardUserDefaults synchronize];
@@ -2936,7 +2994,7 @@ static NSString *wq_language_name(NSString *code)
 - (instancetype)init
 {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
-        self.title = WQLocalizedNullable(@"WQ Files");
+        self.title = WQLocalizedNullable(@"DM FILES");
         [self rebuildLocations];
     }
     return self;
@@ -2947,28 +3005,10 @@ static NSDictionary *wq_row(NSString *rid, NSString *title, NSString *symbol, UI
     return @{@"id": rid, @"title": title, @"symbol": symbol, @"color": color};
 }
 
-// A Settings-style icon: white symbol on a rounded colored square.
+// Row icon: the row's own color, or the accent color when Colored Icons is off.
 static UIImage *wq_badge(NSString *symbol, UIColor *color)
 {
-    static NSMutableDictionary<NSString *, UIImage *> *cache;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSMutableDictionary new]; });
-    NSString *key = [NSString stringWithFormat:@"%@|%@", symbol, color.accessibilityName ?: @""];
-    UIImage *hit = cache[key];
-    if (hit) return hit;
-    const CGFloat side = 30;
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
-    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
-        [color setFill];
-        [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, side, side) cornerRadius:7] fill];
-        UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold];
-        UIImage *glyph = [[UIImage systemImageNamed:symbol withConfiguration:cfg]
-                          imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
-        CGSize size = glyph.size;
-        [glyph drawInRect:CGRectMake((side - size.width) / 2, (side - size.height) / 2, size.width, size.height)];
-    }];
-    cache[key] = image;
-    return image;
+    return wq_badge_image(symbol, wq_colored_icons() ? color : wq_accent_color());
 }
 
 // The start screen: App Data, Apps and the Cache Cleaner are the big tiles at
@@ -2991,8 +3031,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 
     NSMutableArray<NSDictionary *> *sections = [NSMutableArray new];
     [sections addObject:@{@"title": @"Explore", @"rows": explore}];
-    [sections addObject:@{@"title": @"Backups", @"rows": backups,
-                          @"footer": WQLocalized(@"Overwritten and deleted files are copied to Backups first (also visible in the Files app). Long-press a backup to restore it.")}];
+    [sections addObject:@{@"title": @"Backups", @"rows": backups}];
 
     if (wq_show_advanced()) {
         NSMutableArray *advanced = [NSMutableArray new];
@@ -3003,10 +3042,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
             [advanced addObject:wq_row(@"sysgroups", @"System Groups", @"lock.square.stack.fill", UIColor.systemGrayColor)];
         }
         [advanced addObject:wq_row(@"log", @"Log", @"doc.plaintext.fill", UIColor.systemOrangeColor)];
-        NSMutableDictionary *section = [@{@"title": @"Advanced", @"rows": advanced} mutableCopy];
-        if (!wq_system_areas_reachable())
-            section[@"footer"] = WQLocalized(@"On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files.");
-        [sections addObject:section];
+        [sections addObject:@{@"title": @"Advanced", @"rows": advanced}];
     }
 
     NSArray *settings = @[
@@ -3014,12 +3050,11 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         wq_row(@"s_counts", @"Show Item Counts", @"number.square.fill", UIColor.systemBlueColor),
         wq_row(@"s_keep", @"Keep Data Before Restore", @"arrow.uturn.backward.circle.fill", UIColor.systemGreenColor),
         wq_row(@"s_advanced", @"Show Advanced Folders", @"wrench.and.screwdriver.fill", UIColor.systemGrayColor),
+        wq_row(@"appearance", @"Appearance", @"paintpalette.fill", UIColor.systemPinkColor),
         wq_row(@"language", @"Language", @"globe", UIColor.systemBlueColor),
+        wq_row(@"about", @"About", @"info.circle.fill", UIColor.systemGrayColor),
     ];
-    [sections addObject:@{@"title": @"Settings", @"rows": settings,
-        @"footer": [NSString stringWithFormat:@"%@\n\n%@",
-            WQLocalized(@"Allow Deleting: when off, nothing can be deleted: no Delete or swipe to delete in folders and backups, no Clear Data in Apps and no cleaning in the Cache Cleaner. Saving, moving and restoring still work.\n\nShow Item Counts: shows how many items each folder holds. Every subfolder has to be listed for this, which slows down folders with many subfolders, especially in other apps' data."),
-            WQLocalized(@"Keep Data Before Restore: restoring an app or file backup first backs up what's there now, so a failed restore can be undone. When off, that backup is deleted once the restore succeeded.")]}];
+    [sections addObject:@{@"title": @"Settings", @"rows": settings}];
     _sections = sections;
 }
 
@@ -3039,7 +3074,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     return nil;
 }
 
-// Three big tiles for what is used most.
+// Three big tiles for what is used most: solid color, or translucent glass.
 - (UIView *)homeHeader
 {
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 124)];
@@ -3048,22 +3083,36 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         @[@"apps", @"Apps", @"app.fill", UIColor.systemGreenColor],
         @[@"cache", @"Cache Cleaner", @"sparkles", UIColor.systemOrangeColor],
     ];
+    BOOL glass = wq_glass_enabled();
     __weak typeof(self) weakSelf = self;
     NSMutableArray<UIButton *> *buttons = [NSMutableArray new];
     for (NSArray *tile in tiles) {
         NSString *rid = tile[0];
-        UIButtonConfiguration *cfg = [UIButtonConfiguration filledButtonConfiguration];
+        UIColor *color = wq_colored_icons() ? tile[3] : wq_accent_color();
+        UIButtonConfiguration *cfg = glass ? [UIButtonConfiguration plainButtonConfiguration]
+                                           : [UIButtonConfiguration filledButtonConfiguration];
+        UIColor *foreground = glass ? color : UIColor.whiteColor;
         cfg.attributedTitle = [[NSAttributedString alloc] initWithString:WQLocalized(tile[1])
-            attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold]}];
+            attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold],
+                         NSForegroundColorAttributeName: glass ? UIColor.labelColor : foreground}];
         cfg.image = [UIImage systemImageNamed:tile[2]];
         cfg.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:26 weight:UIImageSymbolWeightSemibold];
         cfg.imagePlacement = NSDirectionalRectEdgeTop;
         cfg.imagePadding = 10;
-        cfg.baseBackgroundColor = tile[3];
-        cfg.baseForegroundColor = UIColor.whiteColor;
+        cfg.baseForegroundColor = foreground;
         cfg.cornerStyle = UIButtonConfigurationCornerStyleLarge;
         cfg.titleLineBreakMode = NSLineBreakByTruncatingTail;
         cfg.contentInsets = NSDirectionalEdgeInsetsMake(16, 6, 14, 6);
+        if (glass) {
+            UIBackgroundConfiguration *background = cfg.background;
+            background.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+            background.backgroundColor = [color colorWithAlphaComponent:0.16];
+            background.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.30];
+            background.strokeWidth = 0.5;
+            cfg.background = background;
+        } else {
+            cfg.baseBackgroundColor = color;
+        }
         UIButton *button = [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
             [weakSelf openRow:rid];
         }]];
@@ -3105,10 +3154,13 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    // The Language row shows the choice made in the language list.
-    NSIndexPath *language = [self indexPathForRowID:@"language"];
-    if (self.isViewLoaded && language && (NSUInteger)self.tableView.numberOfSections > (NSUInteger)language.section)
-        [self.tableView reloadRowsAtIndexPaths:@[language] withRowAnimation:UITableViewRowAnimationNone];
+    // Theme, accent color and glass come from Settings → Appearance; the
+    // Language row shows the choice made in the language list.
+    wq_apply_appearance(self.view.window);
+    wq_style_table(self.tableView);
+    self.tableView.tableHeaderView = [self homeHeader];
+    [self rebuildLocations];
+    [self.tableView reloadData];
 }
 
 - (void)viewDidLayoutSubviews
@@ -3188,35 +3240,25 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     [host presentViewController:alert animated:YES completion:nil];
 }
 
-// Version and credits, under the last section. WQ Files is GPL-3.0-or-later:
-// the credit to its author and to worse_query stays.
+// A small Telegram link under the last section. Version and credits
+// (WQ Files by kolbicz, worse_query, GPL-3.0) are in Settings → About.
 - (UIView *)authorFooter
 {
-    UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 84)];
-    UILabel *by = [UILabel new];
-    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
-    by.text = WQLocalizedFormat(@"WQ Files %@ (%@) by kolbicz",
-               info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?");
-    by.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    by.textColor = UIColor.secondaryLabelColor;
-
-    UIButtonConfiguration *creditCfg = [UIButtonConfiguration plainButtonConfiguration];
-    creditCfg.attributedTitle = [[NSAttributedString alloc] initWithString:WQLocalized(@"Sandbox escape: worse_query by @forcequitOS")
-        attributes:@{NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]}];
-    creditCfg.buttonSize = UIButtonConfigurationSizeSmall;
-    UIButton *credit = [UIButton buttonWithConfiguration:creditCfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://x.com/forcequitOS"] options:@{} completionHandler:nil];
+    UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 64)];
+    UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
+    cfg.image = wq_telegram_icon(16);
+    cfg.imagePadding = 6;
+    cfg.attributedTitle = [[NSAttributedString alloc] initWithString:@"t.me/didierxit7"
+        attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12 weight:UIFontWeightMedium],
+                     NSForegroundColorAttributeName: UIColor.secondaryLabelColor}];
+    UIButton *button = [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
+        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://t.me/didierxit7"] options:@{} completionHandler:nil];
     }]];
-
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[by, credit]];
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.alignment = UIStackViewAlignmentCenter;
-    stack.spacing = 4;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [footer addSubview:stack];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [footer addSubview:button];
     [NSLayoutConstraint activateConstraints:@[
-        [stack.centerXAnchor constraintEqualToAnchor:footer.centerXAnchor],
-        [stack.topAnchor constraintEqualToAnchor:footer.topAnchor constant:8],
+        [button.centerXAnchor constraintEqualToAnchor:footer.centerXAnchor],
+        [button.topAnchor constraintEqualToAnchor:footer.topAnchor constant:8],
     ]];
     return footer;
 }
@@ -3235,7 +3277,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return _sections[(NSUInteger)section][@"footer"];
+    return _sections[(NSUInteger)section][@"footer"];   // none on the start screen; the help text is in About
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -3246,6 +3288,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     NSString *rid = row[@"id"];
     cell.accessoryView = nil;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    wq_style_cell(cell);
     UIListContentConfiguration *c = [rid isEqualToString:@"language"] ? [UIListContentConfiguration valueCellConfiguration]
                                                                     : cell.defaultContentConfiguration;
     c.text = WQLocalized(row[@"title"]);
@@ -3267,7 +3310,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
                   : wq_deleting_allowed();
         __weak typeof(self) weakSelf = self;
         [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
-            BOOL on = ((UISwitch *)action.sender).isOn;
+            BOOL on = ((UISwitch *)action.sender).on;
             if ([rid isEqualToString:@"s_counts"]) [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQShowItemCountsPref];
             else if ([rid isEqualToString:@"s_keep"]) wq_set_keep_before_restore(on);
             else if ([rid isEqualToString:@"s_advanced"]) {
@@ -3321,6 +3364,10 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         next = [WQSystemGroupsViewController new];
     } else if ([rid isEqualToString:@"language"]) {
         next = [WQLanguageViewController new];
+    } else if ([rid isEqualToString:@"appearance"]) {
+        next = [WQAppearanceViewController new];
+    } else if ([rid isEqualToString:@"about"]) {
+        next = [WQAboutViewController new];
     } else if ([rid isEqualToString:@"apps"]) {
         if (!_apps || _apps.parentViewController) _apps = [WQAppsViewController new];
         next = _apps;
@@ -3404,7 +3451,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    self.title = WQLocalizedNullable(@"WQ Files");
+    self.title = WQLocalizedNullable(@"DM FILES");
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.tableView.tableHeaderView = wq_device_header(self.view.bounds.size.width);
 }
@@ -3452,15 +3499,15 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-    return !_running && section == 0 ? WQLocalized(@"WQ Files can't work properly here") : nil;
+    return !_running && section == 0 ? WQLocalized(@"DM FILES can't work properly here") : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     if (_running) return nil;
     if (section == 0)
-        return WQLocalized(@"WQ Files stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version.");
-    return WQLocalized(@"Continue Anyway opens WQ Files as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them.");
+        return WQLocalized(@"DM FILES stopped here instead of showing empty or wrong lists. A new iOS version can block its sandbox access; please send the Log with your device and iOS version.");
+    return WQLocalized(@"Continue Anyway opens DM FILES as it is: lists may be empty or wrong, and nothing should be restored or deleted based on them.");
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -3540,6 +3587,7 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 {
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     window.rootViewController = [[WQNavigationController alloc] initWithRootViewController:[WQRootViewController new]];
+    wq_apply_appearance(window);
     [window makeKeyAndVisible];
     self.window = window;
 }
@@ -3602,7 +3650,7 @@ static NSString *wq_count_text(int64_t n)
     text.textAlignment = NSTextAlignmentCenter;
     text.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     text.textColor = UIColor.secondaryLabelColor;
-    text.text = WQLocalizedNullable(@"iOS doesn't let WQ Files list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep WQ Files open. Switching to another app or locking the screen pauses the scan.");
+    text.text = WQLocalizedNullable(@"iOS doesn't let DM FILES list these folders directly, so it checks every file on this device once. This is only slow the first time: later scans only check new files.\n\nKeep DM FILES open. Switching to another app or locking the screen pauses the scan.");
     _bar = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
     _status = [UILabel new];
     _status.font = [UIFont monospacedDigitSystemFontOfSize:[UIFont preferredFontForTextStyle:UIFontTextStyleBody].pointSize
@@ -3674,7 +3722,7 @@ static BOOL wq_confirm_full_scan(NSString *what, int64_t ids, double seconds)
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *top = wq_top_view_controller();
         if (!top) { dispatch_semaphore_signal(answered); return; }   // not in front: don't scan unasked
-        NSString *message = WQLocalizedFormat(@"To list %@, WQ Files has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep WQ Files open while it scans.", what, wq_count_text(ids), wq_duration_text(seconds));
+        NSString *message = WQLocalizedFormat(@"To list %@, DM FILES has to check every file on this device once: %@ files, %@.\n\nThis is only needed the first time; later scans only check new files and take seconds.\n\nKeep DM FILES open while it scans.", what, wq_count_text(ids), wq_duration_text(seconds));
         UIAlertController *alert = wq_alert_controller(@"Scan all files?", message, UIAlertControllerStyleAlert);
         [alert addAction:wq_alert_action(@"Not Now", UIAlertActionStyleCancel, ^(UIAlertAction *__unused a) {
             dispatch_semaphore_signal(answered);

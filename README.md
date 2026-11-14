@@ -20,10 +20,12 @@ WQ Files is available in English, German, Italian, Spanish, Korean, Arabic
 and Simplified Chinese. It follows the device language; **Language** in WQ Files'
 Settings picks another, used from the next start.
 
-## Changes in this fork
+## Changes in this fork (DM FILES)
 
-- **New start screen**: App Data, Apps and the Cache Cleaner are big tiles at the top; the other folders are grouped below with colored icons. Extension Data, Internal Daemons, System Data, System Groups and the Log are behind **Settings → Show Advanced Folders**.
-- **App Data lists apps only**: services, daemons, extensions and system-internal apps are left out. The **eye** button in the top-right corner of App Data brings them back (and the header shows “N apps · M hidden”). The choice is remembered.
+- **New start screen**: App Data, Apps and the Cache Cleaner are big tiles at the top; the other folders are grouped below with icons. Extension Data, Internal Daemons, System Data, System Groups and the Log are behind **Settings → Show Advanced Folders**.
+- **App Data lists apps only**: apps installed by the user plus Apple's home-screen apps. Services, hosts, extensions and system-internal apps are left out. The **eye** button in the top-right corner brings them back.
+- **Appearance** (Settings → Appearance): system/light/dark theme, glass effect, accent color and colored or accent-only icons.
+- **About** (Settings → About): version, help texts and credits. DM FILES is a fork of WQ Files by kolbicz, which builds on worse_query by forcequitOS (GPL-3.0-or-later).
 
 ## What it opens
 

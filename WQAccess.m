@@ -985,7 +985,7 @@ NSString *wq_permission_hint(NSString *path, BOOL forWriting)
                  : (st.st_gid == getgid() ? (st.st_mode >> 3 & need) != 0 : (st.st_mode & need) != 0);
     if (allowed) return nil;
     NSString *owner = st.st_uid == 0 ? @"root" : [NSString stringWithFormat:@"uid %d", (int)st.st_uid];
-    return WQLocalizedFormat(@"This file belongs to %@ (mode %o) and only its owner may %@ it. WQ Files reaches the folder, but runs as mobile (uid %d), so no app can %@ this file.",
+    return WQLocalizedFormat(@"This file belongs to %@ (mode %o) and only its owner may %@ it. DM FILES reaches the folder, but runs as mobile (uid %d), so no app can %@ this file.",
             owner, st.st_mode & 07777, forWriting ? WQLocalized(@"change") : WQLocalized(@"read"), (int)me, forWriting ? WQLocalized(@"change") : WQLocalized(@"open"));
 }
 
@@ -1697,7 +1697,7 @@ static BOOL wq_fsgetpath_sees_others(fsid_t fsid, int64_t maxInode, double *idsP
             [areas addObject:wq_sample_area(path)];
         }
     }
-    wq_log(@"scan: fsgetpath sample: %lu of %lu ids resolve, %lu outside WQ Files (ids up to %lld, %.1f s)",
+    wq_log(@"scan: fsgetpath sample: %lu of %lu ids resolve, %lu outside DM FILES (ids up to %lld, %.1f s)",
            (unsigned long)resolved, (unsigned long)sampled, (unsigned long)foreign, (long long)maxInode,
            CFAbsoluteTimeGetCurrent() - started);
     if (areas.count) {
@@ -1964,12 +1964,12 @@ inodeScan:;
     if (cache && ![known[0] count]) {
         wq_log(@"scan: none of the remembered app containers resolve anymore (%lu dropped); checking whether ids still resolve", (unsigned long)dropped);
         if (!wq_fsgetpath_sees_others(fsid, maxInode, &sampleRate)) {
-            wq_log(@"scan: on this iOS version fsgetpath only resolves WQ Files' own files, so containers can't be found by scanning");
+            wq_log(@"scan: on this iOS version fsgetpath only resolves DM FILES' own files, so containers can't be found by scanning");
             return nil;
         }
     }
     if (!cache && !wq_fsgetpath_sees_others(fsid, maxInode, &sampleRate)) {
-        wq_log(@"scan: on this iOS version fsgetpath only resolves WQ Files' own files, so containers can't be found by scanning");
+        wq_log(@"scan: on this iOS version fsgetpath only resolves DM FILES' own files, so containers can't be found by scanning");
         return nil;
     }
     WQScanCancellation *stop = nil;

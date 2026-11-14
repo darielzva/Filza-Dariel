@@ -32,21 +32,11 @@ NSString *wq_device_line(void)
                     : [NSString stringWithFormat:@"%@ · iOS %@", model, ver];
 }
 
-// A small centered label with the device/iOS line, for a table header.
+// Small breathing space above a list. The device and iOS line used to sit
+// here; it now lives in the log and in About.
 UIView *wq_device_header(CGFloat width)
 {
-    UIView *box = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 50)];
-    UILabel *header = [UILabel new];
-    header.numberOfLines = 0;
-    header.textAlignment = NSTextAlignmentCenter;
-    header.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightMedium];
-    header.textColor = UIColor.secondaryLabelColor;
-    header.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    header.text = wq_device_line();
-    header.frame = CGRectMake(0, 0, width, 34);
-    header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [box addSubview:header];  // 16 pt of clear space below the strip
-    return box;
+    return [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 8)];
 }
 
 // Private: app icon by bundle id (in UIKit; guarded with respondsToSelector).
@@ -352,3 +342,405 @@ NSString *wq_size_text(unsigned long long size)
     if (size == 0) return @"0 KB";
     return [NSByteCountFormatter stringFromByteCount:(long long)size countStyle:NSByteCountFormatterCountStyleFile];
 }
+
+
+#pragma mark - Appearance
+
+static NSString *const kWQThemePref = @"WQTheme";
+static NSString *const kWQGlassPref = @"WQGlass";
+static NSString *const kWQColoredIconsPref = @"WQColoredIcons";
+static NSString *const kWQAccentPref = @"WQAccent";
+
+WQTheme wq_theme(void)
+{
+    NSInteger v = [NSUserDefaults.standardUserDefaults integerForKey:kWQThemePref];
+    return (v >= 0 && v <= 2) ? (WQTheme)v : WQThemeSystem;
+}
+void wq_set_theme(WQTheme theme) { [NSUserDefaults.standardUserDefaults setInteger:theme forKey:kWQThemePref]; }
+
+BOOL wq_glass_enabled(void)
+{
+    id v = [NSUserDefaults.standardUserDefaults objectForKey:kWQGlassPref];
+    return v ? [v boolValue] : YES;
+}
+void wq_set_glass_enabled(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQGlassPref]; }
+
+BOOL wq_colored_icons(void)
+{
+    id v = [NSUserDefaults.standardUserDefaults objectForKey:kWQColoredIconsPref];
+    return v ? [v boolValue] : YES;
+}
+void wq_set_colored_icons(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQColoredIconsPref]; }
+
+NSArray<UIColor *> *wq_accent_colors(void)
+{
+    static NSArray<UIColor *> *colors;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        colors = @[
+            [UIColor colorWithRed:0.04 green:0.52 blue:1.00 alpha:1],   // blue
+            [UIColor colorWithRed:0.49 green:0.36 blue:1.00 alpha:1],   // violet
+            [UIColor colorWithRed:1.00 green:0.22 blue:0.37 alpha:1],   // pink
+            [UIColor colorWithRed:1.00 green:0.62 blue:0.04 alpha:1],   // orange
+            [UIColor colorWithRed:0.19 green:0.82 blue:0.35 alpha:1],   // green
+            [UIColor colorWithRed:0.25 green:0.78 blue:0.88 alpha:1],   // teal
+            [UIColor colorWithRed:1.00 green:0.27 blue:0.23 alpha:1],   // red
+            [UIColor colorWithRed:0.56 green:0.56 blue:0.58 alpha:1],   // graphite
+        ];
+    });
+    return colors;
+}
+
+NSUInteger wq_accent_index(void)
+{
+    NSInteger v = [NSUserDefaults.standardUserDefaults integerForKey:kWQAccentPref];
+    return (v >= 0 && (NSUInteger)v < wq_accent_colors().count) ? (NSUInteger)v : 0;
+}
+void wq_set_accent_index(NSUInteger index) { [NSUserDefaults.standardUserDefaults setInteger:(NSInteger)index forKey:kWQAccentPref]; }
+UIColor *wq_accent_color(void) { return wq_accent_colors()[wq_accent_index()]; }
+
+void wq_reset_appearance(void)
+{
+    for (NSString *key in @[kWQThemePref, kWQGlassPref, kWQColoredIconsPref, kWQAccentPref])
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:key];
+}
+
+void wq_apply_appearance(UIWindow *window)
+{
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray new];
+    if (window) [windows addObject:window];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows)
+            if (![windows containsObject:w]) [windows addObject:w];
+    }
+    WQTheme theme = wq_theme();
+    UIUserInterfaceStyle style = theme == WQThemeLight ? UIUserInterfaceStyleLight
+                               : theme == WQThemeDark ? UIUserInterfaceStyleDark
+                               : UIUserInterfaceStyleUnspecified;
+    UIColor *accent = wq_accent_color();
+    for (UIWindow *w in windows) {
+        w.overrideUserInterfaceStyle = style;
+        w.tintColor = accent;
+    }
+}
+
+// The soft gradient behind the lists. It only uses the accent color with
+// transparency, so the system background (light or dark) shows through.
+@interface WQGradientView : UIView
+@end
+@implementation WQGradientView
++ (Class)layerClass { return CAGradientLayer.class; }
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = UIColor.systemGroupedBackgroundColor;
+        UIColor *accent = wq_accent_color();
+        CAGradientLayer *gradient = (CAGradientLayer *)self.layer;
+        gradient.colors = @[(id)[accent colorWithAlphaComponent:0.42].CGColor,
+                            (id)[accent colorWithAlphaComponent:0.0].CGColor,
+                            (id)[accent colorWithAlphaComponent:0.24].CGColor];
+        gradient.locations = @[@0.0, @0.55, @1.0];
+        gradient.startPoint = CGPointMake(0.15, 0.0);
+        gradient.endPoint = CGPointMake(0.85, 1.0);
+    }
+    return self;
+}
+@end
+
+void wq_style_table(UITableView *table)
+{
+    table.backgroundView = wq_glass_enabled() ? [WQGradientView new] : nil;
+}
+
+void wq_style_cell(UITableViewCell *cell)
+{
+    if (!wq_glass_enabled()) {
+        cell.configurationUpdateHandler = nil;
+        cell.backgroundConfiguration = nil;
+        return;
+    }
+    cell.configurationUpdateHandler = ^(UITableViewCell *c, UICellConfigurationState *state) {
+        UIBackgroundConfiguration *bg = [[UIBackgroundConfiguration listGroupedCellConfiguration] updatedConfigurationForState:state];
+        bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+        bg.backgroundColor = (state.highlighted || state.selected) ? [UIColor.labelColor colorWithAlphaComponent:0.10]
+                                                                         : UIColor.clearColor;
+        bg.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.28];
+        bg.strokeWidth = 0.5;
+        c.backgroundConfiguration = bg;
+    };
+}
+
+UIImage *wq_badge_image(NSString *symbol, UIColor *color)
+{
+    static NSMutableDictionary<NSString *, UIImage *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSMutableDictionary new]; });
+    CGFloat r = 0, g = 0, b = 0, a = 0;
+    [color getRed:&r green:&g blue:&b alpha:&a];
+    NSString *key = [NSString stringWithFormat:@"%@|%.2f,%.2f,%.2f|%ld", symbol, r, g, b,
+                     (long)UITraitCollection.currentTraitCollection.userInterfaceStyle];
+    UIImage *hit = cache[key];
+    if (hit) return hit;
+    const CGFloat side = 30;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
+    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
+        [color setFill];
+        [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, side, side) cornerRadius:8] fill];
+        UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold];
+        UIImage *glyph = [[UIImage systemImageNamed:symbol withConfiguration:cfg]
+                          imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        CGSize size = glyph.size;
+        [glyph drawInRect:CGRectMake((side - size.width) / 2, (side - size.height) / 2, size.width, size.height)];
+    }];
+    cache[key] = image;
+    return image;
+}
+
+// Telegram's blue circle with a paper plane. Drawn by hand, so it is an
+// approximation of the official logo.
+UIImage *wq_telegram_icon(CGFloat side)
+{
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *__unused ctx) {
+        UIColor *blue = [UIColor colorWithRed:0.133 green:0.620 blue:0.851 alpha:1];
+        [blue setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, side, side)] fill];
+        #define P(x, y) CGPointMake((x) * side, (y) * side)
+        UIBezierPath *plane = [UIBezierPath bezierPath];
+        [plane moveToPoint:P(0.78, 0.27)];
+        [plane addLineToPoint:P(0.21, 0.49)];
+        [plane addLineToPoint:P(0.35, 0.57)];
+        [plane addLineToPoint:P(0.41, 0.75)];
+        [plane addLineToPoint:P(0.50, 0.64)];
+        [plane addLineToPoint:P(0.64, 0.73)];
+        [plane closePath];
+        [UIColor.whiteColor setFill];
+        [plane fill];
+        UIBezierPath *fold = [UIBezierPath bezierPath];
+        [fold moveToPoint:P(0.35, 0.57)];
+        [fold addLineToPoint:P(0.70, 0.38)];
+        fold.lineWidth = MAX(1, side * 0.035);
+        [blue setStroke];
+        [fold stroke];
+        #undef P
+    }];
+}
+
+#pragma mark - Appearance screen
+
+@implementation WQAppearanceViewController
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = WQLocalized(@"Appearance");
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    wq_style_table(self.tableView);
+    [self.tableView reloadData];
+}
+
+- (void)changed
+{
+    wq_apply_appearance(self.view.window);
+    wq_style_table(self.tableView);
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf.tableView reloadData]; });
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 4; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    static const NSInteger counts[4] = {3, 2, 1, 1};
+    return counts[section];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
+{
+    if (section == 0) return WQLocalized(@"Theme");
+    if (section == 2) return WQLocalized(@"Accent Color");
+    return nil;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    wq_style_cell(cell);
+    UIListContentConfiguration *c = cell.defaultContentConfiguration;
+    __weak typeof(self) weakSelf = self;
+    if (indexPath.section == 0) {
+        NSArray<NSString *> *names = @[@"System", @"Light", @"Dark"];
+        NSArray<NSString *> *symbols = @[@"circle.lefthalf.filled", @"sun.max.fill", @"moon.fill"];
+        c.text = WQLocalized(names[(NSUInteger)indexPath.row]);
+        c.image = [UIImage systemImageNamed:symbols[(NSUInteger)indexPath.row]];
+        cell.contentConfiguration = c;
+        cell.accessoryType = (NSInteger)wq_theme() == indexPath.row ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        return cell;
+    }
+    if (indexPath.section == 1) {
+        BOOL glass = indexPath.row == 0;
+        c.text = WQLocalized(glass ? @"Glass Effect" : @"Colored Icons");
+        c.image = [UIImage systemImageNamed:glass ? @"square.on.square.intersection.dashed" : @"paintpalette.fill"];
+        cell.contentConfiguration = c;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        UISwitch *toggle = [UISwitch new];
+        toggle.on = glass ? wq_glass_enabled() : wq_colored_icons();
+        [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
+            BOOL on = ((UISwitch *)action.sender).on;
+            if (glass) wq_set_glass_enabled(on); else wq_set_colored_icons(on);
+            [weakSelf changed];
+        }] forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        return cell;
+    }
+    if (indexPath.section == 2) {
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        NSArray<UIColor *> *colors = wq_accent_colors();
+        NSMutableArray<UIButton *> *buttons = [NSMutableArray new];
+        for (NSUInteger i = 0; i < colors.count; i++) {
+            UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+            button.backgroundColor = colors[i];
+            button.layer.cornerRadius = 16;
+            button.tintColor = UIColor.whiteColor;
+            [button.widthAnchor constraintEqualToConstant:32].active = YES;
+            [button.heightAnchor constraintEqualToConstant:32].active = YES;
+            if (i == wq_accent_index()) {
+                button.layer.borderWidth = 3;
+                button.layer.borderColor = UIColor.whiteColor.CGColor;
+                [button setImage:[UIImage systemImageNamed:@"checkmark"
+                                          withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightBold]]
+                        forState:UIControlStateNormal];
+            }
+            [button addAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
+                wq_set_accent_index(i);
+                [weakSelf changed];
+            }] forControlEvents:UIControlEventTouchUpInside];
+            [buttons addObject:button];
+        }
+        UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:buttons];
+        stack.axis = UILayoutConstraintAxisHorizontal;
+        stack.distribution = UIStackViewDistributionEqualSpacing;
+        stack.translatesAutoresizingMaskIntoConstraints = NO;
+        [cell.contentView addSubview:stack];
+        UILayoutGuide *margins = cell.contentView.layoutMarginsGuide;
+        [NSLayoutConstraint activateConstraints:@[
+            [stack.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+            [stack.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+            [stack.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:14],
+            [stack.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor constant:-14],
+        ]];
+        return cell;
+    }
+    c.text = WQLocalized(@"Reset Appearance");
+    c.textProperties.color = UIColor.systemRedColor;
+    cell.contentConfiguration = c;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0) { wq_set_theme((WQTheme)indexPath.row); [self changed]; }
+    else if (indexPath.section == 3) { wq_reset_appearance(); [self changed]; }
+}
+
+@end
+
+#pragma mark - About screen
+
+@implementation WQAboutViewController {
+    NSArray<NSDictionary *> *_sections;   // title, rows (title, detail, url, text)
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = WQLocalized(@"About");
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSString *version = [NSString stringWithFormat:@"%@ (%@)", info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?"];
+    _sections = @[
+        @{@"title": @"", @"rows": @[
+            @{@"title": WQLocalized(@"Version"), @"detail": version},
+            @{@"title": @"Telegram", @"detail": @"t.me/didierxit7", @"url": @"https://t.me/didierxit7", @"telegram": @YES},
+        ]},
+        @{@"title": WQLocalized(@"Help"), @"rows": @[
+            @{@"text": WQLocalized(@"Overwritten and deleted files are copied to Backups first (also visible in the Files app). Long-press a backup to restore it.")},
+            @{@"text": WQLocalized(@"Allow Deleting: when off, nothing can be deleted: no Delete or swipe to delete in folders and backups, no Clear Data in Apps and no cleaning in the Cache Cleaner. Saving, moving and restoring still work.\n\nShow Item Counts: shows how many items each folder holds. Every subfolder has to be listed for this, which slows down folders with many subfolders, especially in other apps' data.")},
+            @{@"text": WQLocalized(@"Keep Data Before Restore: restoring an app or file backup first backs up what's there now, so a failed restore can be undone. When off, that backup is deleted once the restore succeeded.")},
+            @{@"text": WQLocalized(@"On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files.")},
+        ]},
+        @{@"title": WQLocalized(@"Credits"), @"rows": @[
+            @{@"title": @"WQ Files", @"detail": @"kolbicz", @"url": @"https://github.com/kolbicz/WQFiles"},
+            @{@"title": @"worse_query", @"detail": @"@forcequitOS", @"url": @"https://github.com/forcequitOS/worse_query"},
+            @{@"title": @"GPL-3.0-or-later", @"detail": @"gnu.org", @"url": @"https://www.gnu.org/licenses/gpl-3.0.html"},
+        ]},
+    ];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    wq_style_table(self.tableView);
+    [self.tableView reloadData];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return (NSInteger)_sections.count; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return (NSInteger)[_sections[(NSUInteger)section][@"rows"] count];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
+{
+    NSString *title = _sections[(NSUInteger)section][@"title"];
+    return title.length ? title : nil;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    NSDictionary *row = _sections[(NSUInteger)indexPath.section][@"rows"][(NSUInteger)indexPath.row];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    wq_style_cell(cell);
+    if (row[@"text"]) {
+        UIListContentConfiguration *c = cell.defaultContentConfiguration;
+        c.text = row[@"text"];
+        c.textProperties.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        c.textProperties.color = UIColor.secondaryLabelColor;
+        cell.contentConfiguration = c;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+    UIListContentConfiguration *c = [UIListContentConfiguration valueCellConfiguration];
+    c.text = row[@"title"];
+    c.secondaryText = row[@"detail"];
+    if (row[@"telegram"]) {
+        c.image = wq_telegram_icon(24);
+        c.imageProperties.reservedLayoutSize = CGSizeMake(24, 24);
+    }
+    cell.contentConfiguration = c;
+    if (row[@"url"]) cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    else cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSString *url = _sections[(NSUInteger)indexPath.section][@"rows"][(NSUInteger)indexPath.row][@"url"];
+    if (url) [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
+}
+
+@end
