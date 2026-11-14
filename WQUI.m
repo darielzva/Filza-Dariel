@@ -6,6 +6,7 @@
 
 #import "WQUI.h"
 #import "WQAccess.h"
+#import "WQArchive.h"
 #import "WQLaunchServices.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <fcntl.h>
@@ -933,14 +934,39 @@ static NSString *wq_patch_restore(NSDictionary *patch)
     return nil;
 }
 
+// ---- Patch wizard state ------------------------------------------------
+// Shared by "Crear parche" and "Editar parche". Carries the step-by-step
+// form values across the multi-stage UIAlertController sequence.
+@interface WQPatchWizardState : NSObject
+@property (nonatomic, copy)   NSString *patchName;       // step 1
+@property (nonatomic, copy)   NSString *bundleID;        // step 2
+@property (nonatomic, copy)   NSString *targetPath;      // step 3
+@property (nonatomic, strong) NSURL    *pickedFileURL;   // step 4 (security-scoped)
+// When editing an existing patch: folder path and existing source filename.
+@property (nonatomic, copy, nullable) NSString *editingFolder;
+@property (nonatomic, copy, nullable) NSString *existingSourceName;
+@end
+@implementation WQPatchWizardState @end
+// ------------------------------------------------------------------------
+
+// Three distinct document picker modes, routed through one delegate:
+typedef NS_ENUM(NSInteger, WQPickerMode) {
+    WQPickerModeImportDM,   // "Importar parche (.dm)"  — picks a .dm file
+    WQPickerModeWizardFile, // "Crear / editar parche"  — picks the payload file
+};
+
 @interface WQPatchesViewController () <UIDocumentPickerDelegate>
 @end
 
 @implementation WQPatchesViewController {
     NSArray<NSDictionary *> *_patches;   // folder, name, bundleID, files, applied  |  folder, name, error
+    WQPickerMode              _pickerMode;
+    WQPatchWizardState       *_wizard;   // non-nil during the create/edit flow
 }
 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+// ---- viewDidLoad -------------------------------------------------------
 
 - (void)viewDidLoad
 {
@@ -948,13 +974,25 @@ static NSString *wq_patch_restore(NSDictionary *patch)
     self.title = WQLocalized(@"Patches");
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     __weak typeof(self) weakSelf = self;
-    UIAction *importAction = [UIAction actionWithTitle:WQLocalized(@"Import Patch Folder…") image:[UIImage systemImageNamed:@"folder.badge.plus"]
-                                      identifier:nil handler:^(UIAction *__unused a) { [weakSelf importFolder]; }];
-    UIAction *templateAction = [UIAction actionWithTitle:WQLocalized(@"New Patch Template") image:[UIImage systemImageNamed:@"doc.badge.plus"]
-                                        identifier:nil handler:^(UIAction *__unused a) { [weakSelf newTemplate]; }];
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
-                                                                                menu:[UIMenu menuWithChildren:@[importAction, templateAction]]];
+
+    UIAction *importAction =
+        [UIAction actionWithTitle:@"Importar parche (.dm)"
+                            image:[UIImage systemImageNamed:@"arrow.down.doc.fill"]
+                       identifier:nil
+                          handler:^(UIAction *__unused a) { [weakSelf importDM]; }];
+
+    UIAction *createAction =
+        [UIAction actionWithTitle:@"Crear parche"
+                            image:[UIImage systemImageNamed:@"plus.app.fill"]
+                       identifier:nil
+                          handler:^(UIAction *__unused a) { [weakSelf wizardCreate]; }];
+
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
+                                          menu:[UIMenu menuWithChildren:@[importAction, createAction]]];
 }
+
+// ---- viewWillAppear / reload -------------------------------------------
 
 - (void)viewWillAppear:(BOOL)animated
 {
@@ -967,7 +1005,9 @@ static NSString *wq_patch_restore(NSDictionary *patch)
 {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *dir = wq_patches_root();
-    NSArray<NSString *> *names = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+    NSArray<NSString *> *names =
+        [[fm contentsOfDirectoryAtPath:dir error:nil]
+         sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
     NSMutableArray<NSDictionary *> *items = [NSMutableArray new];
     for (NSString *name in names) {
         if ([name hasPrefix:@"."]) continue;
@@ -981,136 +1021,523 @@ static NSString *wq_patch_restore(NSDictionary *patch)
             item[@"applied"] = @([wq_patch_state(folder)[@"applied"] boolValue]);
             [items addObject:item];
         } else {
-            [items addObject:@{@"folder": folder, @"name": name, @"error": error ?: @"Invalid patch."}];
+            [items addObject:@{@"folder": folder, @"name": name,
+                               @"error": error ?: @"Invalid patch."}];
         }
     }
     _patches = items;
     [self.tableView reloadData];
 }
 
-- (void)importFolder
+// ---- Import .dm --------------------------------------------------------
+
+- (void)importDM
 {
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
+    _pickerMode = WQPickerModeImportDM;
+    UTType *dmType = [UTType typeWithFilenameExtension:@"dm"];
+    NSArray<UTType *> *types = dmType ? @[dmType] : @[UTTypeData];
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
     picker.delegate = self;
     [self presentViewController:picker animated:YES completion:nil];
 }
 
-- (void)documentPicker:(UIDocumentPickerViewController *)__unused controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+- (void)handleImportDMAtURL:(NSURL *)url
+{
+    // .dm is a ZIP. Extract into a temp folder, validate, then move into Patches/.
+    NSString *tmpDir = [NSTemporaryDirectory()
+                        stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+    NSString *zipPath = url.path;
+    NSString *extractError = nil;
+    NSUInteger filesExtracted = 0, skipped = 0;
+    BOOL ok = wq_zip_extract(zipPath, tmpDir, wq_archive_posix_io(),
+                             512ULL * 1024 * 1024,   // 512 MB limit
+                             nil, nil,
+                             &filesExtracted, &skipped, &extractError);
+    if (!ok) {
+        [fm removeItemAtPath:tmpDir error:nil];
+        wq_alert(self, @"Importar parche", extractError ?: @"El archivo .dm no se pudo descomprimir.");
+        return;
+    }
+
+    // The archive may put everything under a single top-level folder, or directly.
+    // Find the folder that contains patch.json.
+    NSString *patchFolder = [self findPatchFolderIn:tmpDir];
+    if (!patchFolder) {
+        [fm removeItemAtPath:tmpDir error:nil];
+        wq_alert(self, @"Parche inválido", @"El archivo .dm no contiene patch.json.");
+        return;
+    }
+
+    NSString *validationError = nil;
+    if (!wq_patch_read(patchFolder, &validationError)) {
+        [fm removeItemAtPath:tmpDir error:nil];
+        wq_alert(self, @"Parche inválido", validationError ?: @"patch.json no es válido.");
+        return;
+    }
+
+    // Move the validated folder into Patches/.
+    NSString *dir = wq_patches_root();
+    NSString *destName = patchFolder.lastPathComponent;
+    NSString *dest = [dir stringByAppendingPathComponent:destName];
+    for (NSUInteger n = 2; [fm fileExistsAtPath:dest]; n++) {
+        destName = [NSString stringWithFormat:@"%@ %lu", patchFolder.lastPathComponent, (unsigned long)n];
+        dest = [dir stringByAppendingPathComponent:destName];
+    }
+    NSError *moveError = nil;
+    if (![fm moveItemAtPath:patchFolder toPath:dest error:&moveError]) {
+        [fm removeItemAtPath:tmpDir error:nil];
+        wq_alert(self, @"Error al importar", moveError.localizedDescription);
+        return;
+    }
+    [fm removeItemAtPath:tmpDir error:nil];
+    [self reload];
+}
+
+// Returns the path that directly contains patch.json, searching one level deep.
+- (nullable NSString *)findPatchFolderIn:(NSString *)root
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if ([fm fileExistsAtPath:[root stringByAppendingPathComponent:@"patch.json"]]) return root;
+    for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil]) {
+        if ([name hasPrefix:@"."]) continue;
+        NSString *sub = [root stringByAppendingPathComponent:name];
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:sub isDirectory:&isDir] && isDir) {
+            if ([fm fileExistsAtPath:[sub stringByAppendingPathComponent:@"patch.json"]]) return sub;
+        }
+    }
+    return nil;
+}
+
+// ---- Create / Edit wizard ----------------------------------------------
+
+- (void)wizardCreate
+{
+    _wizard = [WQPatchWizardState new];
+    [self wizardStep1];
+}
+
+- (void)wizardEdit:(NSDictionary *)patch
+{
+    _wizard = [WQPatchWizardState new];
+    _wizard.editingFolder      = patch[@"folder"];
+    _wizard.patchName          = patch[@"name"];
+    _wizard.bundleID           = patch[@"bundleID"];
+    NSDictionary *firstFile    = [patch[@"files"] firstObject];
+    _wizard.targetPath         = firstFile[@"target"];
+    _wizard.existingSourceName = firstFile[@"source"];
+    [self wizardStep1];
+}
+
+// Step 1 — patch name
+- (void)wizardStep1
+{
+    UIAlertController *alert =
+        wq_alert_controller(@"Nombre del parche", @"Ej: Mi parche FreeFire",
+                            UIAlertControllerStyleAlert);
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder       = @"Mi parche FreeFire";
+        tf.autocapitalizationType = UITextAutocapitalizationTypeSentences;
+        tf.text              = self->_wizard.patchName;
+        tf.clearButtonMode   = UITextFieldViewModeWhileEditing;
+    }];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        NSString *name = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
+                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!name.length) { [weakSelf wizardStep1]; return; }
+        weakSelf->_wizard.patchName = name;
+        [weakSelf wizardStep2];
+    })];
+    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Step 2 — bundle ID
+- (void)wizardStep2
+{
+    UIAlertController *alert =
+        wq_alert_controller(@"Bundle ID", @"Ej: com.dts.freefireth",
+                            UIAlertControllerStyleAlert);
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder               = @"com.dts.freefireth";
+        tf.autocorrectionType        = UITextAutocorrectionTypeNo;
+        tf.autocapitalizationType    = UITextAutocapitalizationTypeNone;
+        tf.keyboardType              = UIKeyboardTypeURL;
+        tf.text                      = self->_wizard.bundleID;
+        tf.clearButtonMode           = UITextFieldViewModeWhileEditing;
+    }];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        [weakSelf wizardStep1];
+    })];
+    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        NSString *bid = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
+                         NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+            @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_"];
+        BOOL valid = bid.length > 0
+                     && [bid containsString:@"."]
+                     && [bid rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
+        if (!valid) { [weakSelf wizardStep2]; return; }
+        weakSelf->_wizard.bundleID = bid;
+        [weakSelf wizardStep3];
+    })];
+    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Step 3 — target path
+- (void)wizardStep3
+{
+    UIAlertController *alert =
+        wq_alert_controller(@"Ruta destino",
+                            @"Ej: Documents/contentcache/Optional/archivo.bundle",
+                            UIAlertControllerStyleAlert);
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder            = @"Documents/…/archivo.bundle";
+        tf.autocorrectionType     = UITextAutocorrectionTypeNo;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        tf.text                   = self->_wizard.targetPath;
+        tf.clearButtonMode        = UITextFieldViewModeWhileEditing;
+    }];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        [weakSelf wizardStep2];
+    })];
+    [alert addAction:wq_alert_action(@"Siguiente", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        NSString *path = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:
+                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        BOOL valid = path.length > 0
+                     && ([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"]);
+        if (!valid) { [weakSelf wizardStep3]; return; }
+        weakSelf->_wizard.targetPath = path;
+        [weakSelf wizardStep4];
+    })];
+    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Step 4 — select file
+- (void)wizardStep4
+{
+    BOOL editing = (_wizard.editingFolder != nil);
+    NSString *msg = editing && _wizard.existingSourceName
+        ? [NSString stringWithFormat:@"Archivo actual: %@\nSelecciona uno nuevo para reemplazarlo, o toca Omitir.",
+           _wizard.existingSourceName]
+        : @"Se copiará con el nombre del componente final de la ruta destino.";
+
+    UIAlertController *alert =
+        wq_alert_controller(@"Seleccionar archivo", msg, UIAlertControllerStyleAlert);
+    __weak typeof(self) weakSelf = self;
+
+    [alert addAction:wq_alert_action(@"Atrás", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        [weakSelf wizardStep3];
+    })];
+
+    if (editing && _wizard.existingSourceName) {
+        [alert addAction:wq_alert_action(@"Omitir (mantener archivo actual)", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+            [weakSelf wizardFinish];
+        })];
+    }
+
+    [alert addAction:wq_alert_action(@"Elegir archivo…", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        weakSelf->_pickerMode = WQPickerModeWizardFile;
+        UIDocumentPickerViewController *picker =
+            [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
+        picker.delegate = weakSelf;
+        [weakSelf presentViewController:picker animated:YES completion:nil];
+    })];
+
+    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Final write — creates or overwrites the patch folder and patch.json.
+- (void)wizardFinish
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    WQPatchWizardState *w = _wizard;
+
+    // Destination source filename = last path component of the target path.
+    NSString *sourceName = w.targetPath.lastPathComponent;
+    if (!sourceName.length) sourceName = @"file";
+
+    NSString *folder;
+    if (w.editingFolder) {
+        folder = w.editingFolder;
+    } else {
+        NSString *dir = wq_patches_root();
+        NSString *name = w.patchName;
+        // Sanitize folder name: strip path separators.
+        name = [name stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+        NSString *candidate = [dir stringByAppendingPathComponent:name];
+        NSString *finalName = name;
+        for (NSUInteger n = 2; [fm fileExistsAtPath:candidate]; n++) {
+            finalName = [NSString stringWithFormat:@"%@ %lu", name, (unsigned long)n];
+            candidate = [dir stringByAppendingPathComponent:finalName];
+        }
+        folder = candidate;
+    }
+
+    dispatch_async(wq_io(), ^{
+        NSString *errorMsg = nil;
+
+        [fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+
+        // Copy the picked file into the patch folder (if a new one was selected).
+        if (w.pickedFileURL) {
+            NSString *destFile = [folder stringByAppendingPathComponent:sourceName];
+            // If editing and the source name changed, remove the old file.
+            if (w.editingFolder && w.existingSourceName
+                && ![w.existingSourceName isEqualToString:sourceName]) {
+                [fm removeItemAtPath:[folder stringByAppendingPathComponent:w.existingSourceName]
+                               error:nil];
+            }
+            [fm removeItemAtPath:destFile error:nil];
+            BOOL scoped = [w.pickedFileURL startAccessingSecurityScopedResource];
+            NSError *copyErr = nil;
+            [fm copyItemAtPath:w.pickedFileURL.path toPath:destFile error:&copyErr];
+            if (scoped) [w.pickedFileURL stopAccessingSecurityScopedResource];
+            if (copyErr) errorMsg = copyErr.localizedDescription;
+        } else if (!w.editingFolder) {
+            // No file picked and not editing — shouldn't reach here, but guard anyway.
+            errorMsg = @"No se seleccionó ningún archivo.";
+        } else {
+            // Editing with "Omitir": keep the existing source file, update source name.
+            sourceName = w.existingSourceName ?: sourceName;
+        }
+
+        if (!errorMsg) {
+            NSDictionary *patchJSON = @{
+                @"name":     w.patchName,
+                @"bundleID": w.bundleID,
+                @"files":    @[@{@"source": sourceName, @"target": w.targetPath}]
+            };
+            NSData *data = [NSJSONSerialization dataWithJSONObject:patchJSON
+                                                           options:NSJSONWritingPrettyPrinted
+                                                                   | NSJSONWritingWithoutEscapingSlashes
+                                                             error:nil];
+            if (![data writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES])
+                errorMsg = @"No se pudo guardar patch.json.";
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_wizard = nil;
+            if (errorMsg) {
+                wq_alert(self, @"Error al crear parche", errorMsg);
+            }
+            [self reload];
+        });
+    });
+}
+
+// ---- UIDocumentPickerDelegate ------------------------------------------
+
+- (void)documentPicker:(UIDocumentPickerViewController *)__unused controller
+didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
     NSURL *url = urls.firstObject;
     if (!url) return;
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *dir = wq_patches_root();
-    NSString *name = url.lastPathComponent, *dest = [dir stringByAppendingPathComponent:name];
-    for (NSUInteger n = 2; [fm fileExistsAtPath:dest]; n++) {
-        name = [NSString stringWithFormat:@"%@ %lu", url.lastPathComponent, (unsigned long)n];
-        dest = [dir stringByAppendingPathComponent:name];
+
+    switch (_pickerMode) {
+        case WQPickerModeImportDM:
+            [self handleImportDMAtURL:url];
+            break;
+        case WQPickerModeWizardFile:
+            _wizard.pickedFileURL = url;
+            [self wizardFinish];
+            break;
     }
-    BOOL scoped = [url startAccessingSecurityScopedResource];
-    NSError *copyError = nil;
-    BOOL copied = [fm copyItemAtURL:url toURL:[NSURL fileURLWithPath:dest] error:&copyError];
-    if (scoped) [url stopAccessingSecurityScopedResource];
-    if (!copied) { wq_alert(self, @"Patch failed", copyError.localizedDescription); return; }
-    NSString *error = nil;
-    if (!wq_patch_read(dest, &error)) {
-        [fm removeItemAtPath:dest error:nil];
-        wq_alert(self, @"Patch failed", error);
-        return;
-    }
-    [self reload];
 }
 
-- (void)newTemplate
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)__unused controller
 {
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *dir = wq_patches_root(), *name = @"New Patch";
-    for (NSUInteger n = 2; [fm fileExistsAtPath:[dir stringByAppendingPathComponent:name]]; n++)
-        name = [NSString stringWithFormat:@"New Patch %lu", (unsigned long)n];
-    NSString *folder = [dir stringByAppendingPathComponent:name];
-    [fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
-    NSDictionary *template = @{@"name": name, @"bundleID": @"com.example.app",
-        @"files": @[@{@"source": @"file.bin", @"target": @"Documents/path/inside/the/app/file.bin"}]};
-    NSData *data = [NSJSONSerialization dataWithJSONObject:template
-                                                   options:NSJSONWritingPrettyPrinted | NSJSONWritingWithoutEscapingSlashes error:nil];
-    [data writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES];
-    [self reload];
-    wq_alert(self, @"Template created", WQLocalizedFormat(@"Open Files → DM FILES → Patches → %@, edit patch.json and add your files to that folder.", name));
+    // If we were in a wizard file step, go back to step 4 so the user can retry.
+    if (_pickerMode == WQPickerModeWizardFile && _wizard) {
+        [self wizardStep4];
+    }
 }
 
-- (void)run:(BOOL)restore patch:(NSDictionary *)patch
+// ---- Apply / Restore with UISwitch ------------------------------------
+
+// Called by the switch in each cell when its value changes.
+- (void)switchChanged:(UISwitch *)sw
 {
-    UIAlertController *busy = wq_alert_controller(WQLocalized(restore ? @"Restore Original" : @"Apply Patch"), @"…", UIAlertControllerStyleAlert);
+    NSUInteger row = (NSUInteger)sw.tag;
+    if (row >= _patches.count) return;
+    NSDictionary *patch = _patches[row];
+    if (patch[@"error"]) { sw.on = !sw.on; return; }
+
+    BOOL applying = sw.on;
+    sw.enabled = NO;   // block further taps while running
+
+    NSString *progressTitle = applying ? @"Activando parche…" : @"Desactivando parche…";
+    UIAlertController *busy = wq_alert_controller(progressTitle, nil, UIAlertControllerStyleAlert);
     [self presentViewController:busy animated:YES completion:nil];
+
+    __weak typeof(self) weakSelf = self;
     dispatch_async(wq_io(), ^{
-        NSString *error = restore ? wq_patch_restore(patch) : wq_patch_apply(patch);
+        NSString *error = applying ? wq_patch_apply(patch) : wq_patch_restore(patch);
         dispatch_async(dispatch_get_main_queue(), ^{
             [busy dismissViewControllerAnimated:YES completion:^{
-                if (error) wq_alert(self, @"Patch failed", error);
-                else wq_alert(self, restore ? @"Original restored" : @"Patch applied", nil);
-                [self reload];
+                sw.enabled = YES;
+                if (error) {
+                    sw.on = !applying;   // revert the switch
+                    wq_alert(weakSelf, applying ? @"Error al activar" : @"Error al desactivar", error);
+                } else {
+                    // Update the in-memory applied flag so the switch stays consistent.
+                    NSMutableDictionary *updated = [patch mutableCopy];
+                    updated[@"applied"] = @(applying);
+                    NSMutableArray *mutable = [weakSelf->_patches mutableCopy];
+                    mutable[row] = updated;
+                    weakSelf->_patches = mutable;
+                    // Full reload keeps bundles in sync; the switch already reflects the state.
+                    [weakSelf reload];
+                }
             }];
         });
     });
 }
 
+// ---- Long-press: Export / Edit -----------------------------------------
+
+- (void)handleLongPress:(UILongPressGestureRecognizer *)gr
+{
+    if (gr.state != UIGestureRecognizerStateBegan) return;
+    CGPoint pt = [gr locationInView:self.tableView];
+    NSIndexPath *ip = [self.tableView indexPathForRowAtPoint:pt];
+    if (!ip) return;
+    NSDictionary *patch = _patches[(NSUInteger)ip.row];
+
+    UIAlertController *sheet =
+        wq_alert_controller(patch[@"name"], nil, UIAlertControllerStyleActionSheet);
+    __weak typeof(self) weakSelf = self;
+
+    [sheet addAction:wq_alert_action(@"Exportar parche (.dm)", UIAlertActionStyleDefault,
+                                     ^(UIAlertAction *__unused a) {
+        [weakSelf exportPatch:patch fromCell:[self.tableView cellForRowAtIndexPath:ip]];
+    })];
+
+    if (!patch[@"error"]) {
+        [sheet addAction:wq_alert_action(@"Editar parche", UIAlertActionStyleDefault,
+                                         ^(UIAlertAction *__unused a) {
+            [weakSelf wizardEdit:patch];
+        })];
+    }
+
+    [sheet addAction:wq_alert_action(WQLocalized(@"Cancel"), UIAlertActionStyleCancel, nil)];
+    sheet.popoverPresentationController.sourceView = [self.tableView cellForRowAtIndexPath:ip];
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)exportPatch:(NSDictionary *)patch fromCell:(UIView *_Nullable)sourceView
+{
+    NSString *folder = patch[@"folder"];
+    NSString *patchName = patch[@"name"] ?: folder.lastPathComponent;
+
+    // Sanitize the filename.
+    NSString *safeName = [patchName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+    NSString *zipPath = [NSTemporaryDirectory()
+                         stringByAppendingPathComponent:[safeName stringByAppendingPathExtension:@"dm"]];
+    [[NSFileManager defaultManager] removeItemAtPath:zipPath error:nil];
+
+    UIAlertController *busy =
+        wq_alert_controller(@"Exportando…", nil, UIAlertControllerStyleAlert);
+    [self presentViewController:busy animated:YES completion:nil];
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(wq_io(), ^{
+        NSString *errorText = nil;
+        BOOL ok = wq_zip_write(@[folder], zipPath, wq_archive_posix_io(),
+                               nil, nil, nil, &errorText);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [busy dismissViewControllerAnimated:YES completion:^{
+                if (!ok || ![[NSFileManager defaultManager] fileExistsAtPath:zipPath]) {
+                    wq_alert(weakSelf, @"Error al exportar", errorText ?: @"No se pudo crear el .dm.");
+                    return;
+                }
+                NSURL *dmURL = [NSURL fileURLWithPath:zipPath];
+                UIActivityViewController *share =
+                    [[UIActivityViewController alloc] initWithActivityItems:@[dmURL]
+                                                     applicationActivities:nil];
+                share.popoverPresentationController.sourceView = sourceView ?: weakSelf.view;
+                [weakSelf presentViewController:share animated:YES completion:nil];
+            }];
+        });
+    });
+}
+
+// ---- UITableViewDataSource / Delegate ----------------------------------
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 1; }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return (NSInteger)_patches.count; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return (NSInteger)_patches.count;
+}
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return _patches.count ? nil : WQLocalized(@"No patches yet. Put a folder with a patch.json and the files to copy in Files → DM FILES → Patches, or tap + to import one.");
+    return _patches.count ? nil :
+        @"Sin parches. Toca + → "Importar parche (.dm)" para añadir uno, o "Crear parche" para construirlo paso a paso.";
 }
 
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+- (UITableViewCell *)tableView:(UITableView *)tableView
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     NSDictionary *patch = _patches[(NSUInteger)indexPath.row];
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    UITableViewCell *cell =
+        [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     wq_style_cell(cell);
+
     UIListContentConfiguration *c = [UIListContentConfiguration subtitleCellConfiguration];
-    c.text = patch[@"name"];
-    c.image = [UIImage systemImageNamed:patch[@"error"] ? @"exclamationmark.triangle.fill" : @"bandage.fill"];
+    c.text  = patch[@"name"];
+    c.image = [UIImage systemImageNamed:patch[@"error"]
+                                            ? @"exclamationmark.triangle.fill"
+                                            : @"bandage.fill"];
     if (patch[@"error"]) {
         c.secondaryText = patch[@"error"];
         c.secondaryTextProperties.color = UIColor.systemRedColor;
+        cell.contentConfiguration = c;
     } else {
-        c.secondaryText = WQLocalizedFormat(@"%lu files · %@", (unsigned long)[patch[@"files"] count], patch[@"bundleID"]);
+        c.secondaryText = [NSString stringWithFormat:@"%lu archivos · %@",
+                           (unsigned long)[patch[@"files"] count], patch[@"bundleID"]];
+        cell.contentConfiguration = c;
+
+        // UISwitch as accessoryView; tag carries the row index for the callback.
+        UISwitch *sw = [[UISwitch alloc] init];
+        sw.tag = indexPath.row;
+        sw.on  = [patch[@"applied"] boolValue];
+        [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = sw;
     }
-    cell.contentConfiguration = c;
-    if ([patch[@"applied"] boolValue]) {
-        UIImageView *badge = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark.circle.fill"]];
-        badge.tintColor = UIColor.systemGreenColor;
-        badge.accessibilityLabel = WQLocalized(@"Applied");
-        [badge sizeToFit];
-        cell.accessoryView = badge;
-    }
+
+    // Long-press recognizer — one per cell, identified by row via tag.
+    UILongPressGestureRecognizer *lp =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                      action:@selector(handleLongPress:)];
+    lp.minimumPressDuration = 0.5;
+    [cell addGestureRecognizer:lp];
+
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    // Tap on a valid patch toggles the switch programmatically.
     NSDictionary *patch = _patches[(NSUInteger)indexPath.row];
-    BOOL applied = [patch[@"applied"] boolValue];
-    UIAlertController *sheet = wq_alert_controller(patch[@"name"], patch[@"error"] ?: patch[@"bundleID"], UIAlertControllerStyleActionSheet);
-    __weak typeof(self) weakSelf = self;
-    if (!patch[@"error"]) {
-        [sheet addAction:wq_alert_action(WQLocalized(@"Apply Patch"), UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-            [weakSelf run:NO patch:patch];
-        })];
-        if (applied)
-            [sheet addAction:wq_alert_action(WQLocalized(@"Restore Original"), UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-                [weakSelf run:YES patch:patch];
-            })];
-    }
-    if (!applied && wq_deleting_allowed())
-        [sheet addAction:wq_alert_action(WQLocalized(@"Delete Patch"), UIAlertActionStyleDestructive, ^(UIAlertAction *__unused a) {
-            [NSFileManager.defaultManager removeItemAtPath:patch[@"folder"] error:nil];
-            [weakSelf reload];
-        })];
-    [sheet addAction:wq_alert_action(WQLocalized(@"Cancel"), UIAlertActionStyleCancel, nil)];
-    sheet.popoverPresentationController.sourceView = [tableView cellForRowAtIndexPath:indexPath];
-    [self presentViewController:sheet animated:YES completion:nil];
+    if (patch[@"error"]) return;
+    UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+    UISwitch *sw = (UISwitch *)cell.accessoryView;
+    if (![sw isKindOfClass:UISwitch.class]) return;
+    sw.on = !sw.on;
+    [self switchChanged:sw];
 }
 
 @end
