@@ -11,6 +11,7 @@
 #import "WQDir.h"
 #import "WQLaunchServices.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <CommonCrypto/CommonCrypto.h>
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <sys/sysctl.h>
@@ -689,6 +690,7 @@ UIImage *wq_telegram_icon(CGFloat side)
         @{@"title": WQLocalized(@"Credits"), @"rows": @[
             @{@"title": @"WQ Files", @"detail": @"kolbicz", @"url": @"https://github.com/kolbicz/WQFiles"},
             @{@"title": @"worse_query", @"detail": @"@forcequitOS", @"url": @"https://github.com/forcequitOS/worse_query"},
+            @{@"title": @"3105 (.3105)", @"detail": @"YangJiii", @"url": @"https://github.com/YangJiiii/3105"},
             @{@"title": @"GPL-3.0-or-later", @"detail": @"gnu.org", @"url": @"https://www.gnu.org/licenses/gpl-3.0.html"},
         ]},
     ];
@@ -1352,9 +1354,336 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 
 // ------------------------------------------------------------------------
 
+#pragma mark - .3105 packages (import only)
+
+// 3105 (github.com/YangJiiii/3105, GPL-3.0) keeps a patch in a ".3105" file:
+//   "3105PATCH\0"  +  a binary plist envelope  +  AES-256-GCM payload
+// The envelope is readable without a password. A package without a password
+// carries its content key in the envelope ("publicContentKey"); a protected one
+// needs the password the author set (PBKDF2-HMAC-SHA256 -> unwraps the key).
+// The payload is a plist with the project and its rules; each rule is a file
+// to write at "relativePath" inside an app's data. DM FILES turns every app in
+// the package into a patch folder, so Apply/Restore work as for its own patches.
+
+// ---- GHASH begin (plain C, no dependencies)
+typedef struct { uint64_t hl[16], hh[16]; } wq_ghash_t;
+
+static const uint64_t wq_last4[16] = {
+    0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
+    0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0
+};
+
+// 4-bit table method for multiplying by H in GF(2^128).
+static void wq_ghash_init(wq_ghash_t *g, const uint8_t h[16])
+{
+    uint64_t vh = 0, vl = 0;
+    for (int i = 0; i < 8; i++) { vh = (vh << 8) | h[i]; vl = (vl << 8) | h[8 + i]; }
+    g->hl[0] = 0; g->hh[0] = 0;
+    g->hl[8] = vl; g->hh[8] = vh;
+    for (int i = 4; i > 0; i >>= 1) {
+        uint32_t t = (uint32_t)(vl & 1) * 0xe1000000U;
+        vl = (vh << 63) | (vl >> 1);
+        vh = (vh >> 1) ^ ((uint64_t)t << 32);
+        g->hl[i] = vl; g->hh[i] = vh;
+    }
+    for (int i = 2; i < 16; i <<= 1) {
+        uint64_t *hil = g->hl + i, *hih = g->hh + i;
+        vh = *hih; vl = *hil;
+        for (int j = 1; j < i; j++) { hih[j] = vh ^ g->hh[j]; hil[j] = vl ^ g->hl[j]; }
+    }
+}
+
+static void wq_ghash_mult(const wq_ghash_t *g, uint8_t x[16])
+{
+    uint8_t lo = x[15] & 0xf;
+    uint64_t zh = g->hh[lo], zl = g->hl[lo];
+    for (int i = 15; i >= 0; i--) {
+        lo = x[i] & 0xf;
+        uint8_t hi = (x[i] >> 4) & 0xf;
+        uint8_t rem;
+        if (i != 15) {
+            rem = (uint8_t)(zl & 0xf);
+            zl = (zh << 60) | (zl >> 4);
+            zh = zh >> 4;
+            zh ^= wq_last4[rem] << 48;
+            zh ^= g->hh[lo];
+            zl ^= g->hl[lo];
+        }
+        rem = (uint8_t)(zl & 0xf);
+        zl = (zh << 60) | (zl >> 4);
+        zh = zh >> 4;
+        zh ^= wq_last4[rem] << 48;
+        zh ^= g->hh[hi];
+        zl ^= g->hl[hi];
+    }
+    for (int i = 0; i < 8; i++) { x[i] = (uint8_t)(zh >> (56 - 8 * i)); x[8 + i] = (uint8_t)(zl >> (56 - 8 * i)); }
+}
+
+// y = (y xor block) * H for every 16-byte block of data (last one zero-padded).
+static void wq_ghash_update(const wq_ghash_t *g, uint8_t y[16], const uint8_t *data, size_t len)
+{
+    while (len) {
+        size_t n = len < 16 ? len : 16;
+        for (size_t i = 0; i < n; i++) y[i] ^= data[i];
+        wq_ghash_mult(g, y);
+        data += n; len -= n;
+    }
+}
+// ---- GHASH end
+
+static BOOL wq_aes_ecb(NSData *key, const uint8_t *in, size_t length, uint8_t *out)
+{
+    size_t moved = 0;
+    CCCryptorStatus status = CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionECBMode, key.bytes, key.length,
+                                     NULL, in, length, out, length, &moved);
+    return status == kCCSuccess && moved == length;
+}
+
+// AES-256-GCM open with a 12-byte nonce. nil when the tag doesn't match
+// (wrong key, wrong password or a damaged file).
+static NSData *wq_gcm_open(NSData *key, NSData *nonce, NSData *aad, NSData *ciphertext, NSData *tag)
+{
+    if (key.length != 32 || nonce.length != 12 || tag.length != 16) return nil;
+    uint8_t zero[16] = {0}, h[16];
+    if (!wq_aes_ecb(key, zero, 16, h)) return nil;
+    wq_ghash_t ghash;
+    wq_ghash_init(&ghash, h);
+    uint8_t y[16] = {0};
+    wq_ghash_update(&ghash, y, aad.bytes, aad.length);
+    wq_ghash_update(&ghash, y, ciphertext.bytes, ciphertext.length);
+    uint8_t lengths[16];
+    uint64_t aadBits = (uint64_t)aad.length * 8, textBits = (uint64_t)ciphertext.length * 8;
+    for (int i = 0; i < 8; i++) {
+        lengths[i] = (uint8_t)(aadBits >> (56 - 8 * i));
+        lengths[8 + i] = (uint8_t)(textBits >> (56 - 8 * i));
+    }
+    wq_ghash_update(&ghash, y, lengths, 16);
+    uint8_t j0[16] = {0}, ej0[16];
+    memcpy(j0, nonce.bytes, 12);
+    j0[15] = 1;
+    if (!wq_aes_ecb(key, j0, 16, ej0)) return nil;
+    uint8_t diff = 0;
+    const uint8_t *tagBytes = tag.bytes;
+    for (int i = 0; i < 16; i++) diff |= (uint8_t)(y[i] ^ ej0[i] ^ tagBytes[i]);
+    if (diff) return nil;
+
+    NSMutableData *plain = [NSMutableData dataWithLength:ciphertext.length];
+    const size_t chunkBlocks = 65536;   // 1 MB of keystream at a time
+    uint8_t *counters = malloc(chunkBlocks * 16), *stream = malloc(chunkBlocks * 16);
+    if (!counters || !stream) { free(counters); free(stream); return nil; }
+    const uint8_t *source = ciphertext.bytes;
+    uint8_t *target = plain.mutableBytes;
+    uint32_t counter = 2;
+    size_t done = 0;
+    BOOL ok = YES;
+    while (done < ciphertext.length) {
+        size_t remaining = ciphertext.length - done;
+        size_t blocks = MIN(chunkBlocks, (remaining + 15) / 16);
+        for (size_t b = 0; b < blocks; b++) {
+            memcpy(counters + b * 16, nonce.bytes, 12);
+            uint32_t c = counter++;
+            counters[b * 16 + 12] = (uint8_t)(c >> 24);
+            counters[b * 16 + 13] = (uint8_t)(c >> 16);
+            counters[b * 16 + 14] = (uint8_t)(c >> 8);
+            counters[b * 16 + 15] = (uint8_t)c;
+        }
+        if (!wq_aes_ecb(key, counters, blocks * 16, stream)) { ok = NO; break; }
+        size_t n = MIN(remaining, blocks * 16);
+        for (size_t i = 0; i < n; i++) target[done + i] = source[done + i] ^ stream[i];
+        done += n;
+    }
+    free(counters);
+    free(stream);
+    return ok ? plain : nil;
+}
+
+static NSData *wq_data_slice(NSData *data, NSUInteger from, NSUInteger length)
+{
+    return [data subdataWithRange:NSMakeRange(from, length)];
+}
+
+// Reads a .3105 file: {name, rules: [{bundleID, relativePath, filename, data}], skipped}.
+// Returns nil with errorText; needsPassword is set when a password is missing or wrong.
+static NSDictionary *wq_3105_decode(NSData *file, NSString *password, NSString **errorText, BOOL *needsPassword)
+{
+    NSString *problem = nil;
+    static const uint8_t magic[10] = {'3', '1', '0', '5', 'P', 'A', 'T', 'C', 'H', 0};
+    if (file.length < 11 || memcmp(file.bytes, magic, 10) != 0) {
+        if (errorText) *errorText = @"No es un parche .3105 (falta la cabecera 3105PATCH).";
+        return nil;
+    }
+    id envelopeObject = [NSPropertyListSerialization propertyListWithData:wq_data_slice(file, 10, file.length - 10)
+                                                                  options:NSPropertyListImmutable format:NULL error:nil];
+    NSDictionary *envelope = [envelopeObject isKindOfClass:NSDictionary.class] ? envelopeObject : nil;
+    NSInteger schema = [envelope[@"schemaVersion"] integerValue];
+    NSString *packageID = [envelope[@"packageID"] isKindOfClass:NSString.class] ? envelope[@"packageID"] : nil;
+    NSData *sealed = [envelope[@"encryptedPayload"] isKindOfClass:NSData.class] ? envelope[@"encryptedPayload"] : nil;
+    NSData *fingerprint = [envelope[@"keyFingerprint"] isKindOfClass:NSData.class] ? envelope[@"keyFingerprint"] : nil;
+    BOOL isProtected = [envelope[@"isPasswordProtected"] boolValue];
+    if (!envelope || schema < 1 || !packageID.length || sealed.length < 28) {
+        if (errorText) *errorText = @"El parche .3105 está dañado o es de una versión que no se reconoce.";
+        return nil;
+    }
+
+    NSData *contentKey = nil;
+    if (!isProtected) {
+        contentKey = [envelope[@"publicContentKey"] isKindOfClass:NSData.class] ? envelope[@"publicContentKey"] : nil;
+    } else {
+        if (!password.length) {
+            if (needsPassword) *needsPassword = YES;
+            if (errorText) *errorText = @"Este parche está protegido con contraseña.";
+            return nil;
+        }
+        NSData *salt = [envelope[@"kdfSalt"] isKindOfClass:NSData.class] ? envelope[@"kdfSalt"] : nil;
+        NSData *wrapped = [envelope[@"wrappedContentKey"] isKindOfClass:NSData.class] ? envelope[@"wrappedContentKey"] : nil;
+        NSInteger iterations = [envelope[@"kdfIterations"] integerValue];
+        if (salt.length < 8 || wrapped.length != 60 || iterations < 1000 || iterations > 10000000) {
+            if (errorText) *errorText = @"El parche .3105 está dañado (datos de la contraseña no válidos).";
+            return nil;
+        }
+        NSData *passwordBytes = [password dataUsingEncoding:NSUTF8StringEncoding];
+        uint8_t derived[32];
+        if (CCKeyDerivationPBKDF(kCCPBKDF2, passwordBytes.bytes, passwordBytes.length, salt.bytes, salt.length,
+                                 kCCPRFHmacAlgSHA256, (unsigned)iterations, derived, 32) != kCCSuccess) {
+            if (errorText) *errorText = @"No se pudo derivar la clave de la contraseña.";
+            return nil;
+        }
+        NSInteger keyVersion = envelope[@"keyAADVersion"] ? [envelope[@"keyAADVersion"] integerValue] : schema;
+        NSData *keyAAD = [[NSString stringWithFormat:@"3105PATCH/v%ld/key/%@", (long)keyVersion, packageID] dataUsingEncoding:NSUTF8StringEncoding];
+        contentKey = wq_gcm_open([NSData dataWithBytes:derived length:32], wq_data_slice(wrapped, 0, 12), keyAAD,
+                                 wq_data_slice(wrapped, 12, 32), wq_data_slice(wrapped, 44, 16));
+        if (!contentKey) {
+            if (needsPassword) *needsPassword = YES;
+            if (errorText) *errorText = @"Contraseña incorrecta.";
+            return nil;
+        }
+    }
+    if (contentKey.length != 32) {
+        if (errorText) *errorText = @"El parche .3105 no trae una clave válida.";
+        return nil;
+    }
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(contentKey.bytes, (CC_LONG)contentKey.length, digest);
+    if (fingerprint.length == 32 && memcmp(digest, fingerprint.bytes, 32) != 0) {
+        if (needsPassword) *needsPassword = isProtected;
+        if (errorText) *errorText = isProtected ? @"Contraseña incorrecta." : @"El parche .3105 está dañado (la clave no coincide).";
+        return nil;
+    }
+
+    NSData *payloadAAD = [[NSString stringWithFormat:@"3105PATCH/v%ld/payload/%@", (long)schema, packageID] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *payload = wq_gcm_open(contentKey, wq_data_slice(sealed, 0, 12), payloadAAD,
+                                  wq_data_slice(sealed, 12, sealed.length - 28), wq_data_slice(sealed, sealed.length - 16, 16));
+    if (!payload) {
+        if (errorText) *errorText = @"No se pudo descifrar el parche (archivo dañado o modificado).";
+        return nil;
+    }
+    id payloadObject = [NSPropertyListSerialization propertyListWithData:payload options:NSPropertyListImmutable format:NULL error:nil];
+    NSDictionary *payloadDict = [payloadObject isKindOfClass:NSDictionary.class] ? payloadObject : nil;
+    NSDictionary *project = [payloadDict[@"project"] isKindOfClass:NSDictionary.class] ? payloadDict[@"project"] : nil;
+    NSArray *rules = [project[@"rules"] isKindOfClass:NSArray.class] ? project[@"rules"] : nil;
+    NSDictionary *digests = [payloadDict[@"replacementDigests"] isKindOfClass:NSDictionary.class] ? payloadDict[@"replacementDigests"] : @{};
+    if (!rules) {
+        if (errorText) *errorText = @"El contenido del parche no tiene el formato esperado.";
+        return nil;
+    }
+
+    NSMutableArray<NSDictionary *> *clean = [NSMutableArray new];
+    NSUInteger skipped = 0;
+    for (id item in rules) {
+        NSDictionary *rule = [item isKindOfClass:NSDictionary.class] ? item : nil;
+        NSString *bundleID = [rule[@"bundleID"] isKindOfClass:NSString.class] ? rule[@"bundleID"] : nil;
+        NSString *path = [rule[@"relativePath"] isKindOfClass:NSString.class] ? rule[@"relativePath"] : nil;
+        NSData *data = [rule[@"replacementData"] isKindOfClass:NSData.class] ? rule[@"replacementData"] : nil;
+        NSString *filename = [rule[@"replacementFilename"] isKindOfClass:NSString.class] ? rule[@"replacementFilename"] : path.lastPathComponent;
+        NSString *operation = [rule[@"operation"] isKindOfClass:NSString.class] ? rule[@"operation"] : @"replace";
+        NSString *kind = [rule[@"containerKind"] isKindOfClass:NSString.class] ? rule[@"containerKind"] : @"app";
+        BOOL appContainer = [kind isEqualToString:@"app"] || [kind isEqualToString:@"application"];
+        // Only "replace" rules in an app's data are supported for now.
+        if (!rule || !appContainer || ![operation isEqualToString:@"replace"] || !data || !bundleID.length || !wq_patch_rel_ok(path)
+            || !([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"])) {
+            skipped++;
+            continue;
+        }
+        NSData *expected = [digests[rule[@"id"]] isKindOfClass:NSData.class] ? digests[rule[@"id"]] : nil;
+        if (expected.length == 32) {
+            uint8_t actual[CC_SHA256_DIGEST_LENGTH];
+            CC_SHA256(data.bytes, (CC_LONG)data.length, actual);
+            if (memcmp(actual, expected.bytes, 32) != 0) {
+                problem = @"Un archivo del parche no pasó la verificación de integridad.";
+                break;
+            }
+        }
+        [clean addObject:@{@"bundleID": bundleID, @"relativePath": path, @"filename": filename ?: @"file", @"data": data}];
+    }
+    if (problem) { if (errorText) *errorText = problem; return nil; }
+    NSString *name = [project[@"name"] isKindOfClass:NSString.class] && [project[@"name"] length] ? project[@"name"] : @"Parche 3105";
+    return @{@"name": name, @"rules": clean, @"skipped": @(skipped)};
+}
+
+// Writes a decoded package as patch folders in Documents/Patches, one per app.
+// Returns the names of the folders created.
+static NSArray<NSString *> *wq_3105_install(NSDictionary *package, NSString **errorText)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray<NSString *> *order = [NSMutableArray new];
+    NSMutableDictionary<NSString *, NSMutableArray<NSDictionary *> *> *byBundle = [NSMutableDictionary new];
+    for (NSDictionary *rule in package[@"rules"]) {
+        NSString *bid = rule[@"bundleID"];
+        if (!byBundle[bid]) { byBundle[bid] = [NSMutableArray new]; [order addObject:bid]; }
+        [byBundle[bid] addObject:rule];
+    }
+    if (!order.count) {
+        if (errorText) *errorText = @"El parche no tiene reglas que DM FILES pueda aplicar (solo reemplazo de archivos en datos de apps).";
+        return nil;
+    }
+    NSCharacterSet *bad = [NSCharacterSet characterSetWithCharactersInString:@"/\\:"];
+    NSMutableArray<NSString *> *created = [NSMutableArray new];
+    for (NSString *bid in order) {
+        NSString *base = order.count > 1 ? [NSString stringWithFormat:@"%@ – %@", package[@"name"], bid] : package[@"name"];
+        base = [[base componentsSeparatedByCharactersInSet:bad] componentsJoinedByString:@"-"];
+        base = [base stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!base.length || [base hasPrefix:@"."]) base = @"Parche 3105";
+        NSString *root = wq_patches_root();
+        NSString *name = base, *folder = [root stringByAppendingPathComponent:name];
+        for (NSUInteger n = 2; [fm fileExistsAtPath:folder]; n++) {
+            name = [NSString stringWithFormat:@"%@ %lu", base, (unsigned long)n];
+            folder = [root stringByAppendingPathComponent:name];
+        }
+        if (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil]) {
+            if (errorText) *errorText = @"No se pudo crear la carpeta del parche.";
+            return nil;
+        }
+        NSMutableArray<NSDictionary *> *files = [NSMutableArray new];
+        NSArray<NSDictionary *> *rules = byBundle[bid];
+        for (NSUInteger i = 0; i < rules.count; i++) {
+            NSString *leaf = [[rules[i][@"filename"] lastPathComponent] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (!leaf.length || [leaf hasPrefix:@"."]) leaf = @"file";
+            NSString *source = [NSString stringWithFormat:@"%lu_%@", (unsigned long)i, leaf];
+            if (![rules[i][@"data"] writeToFile:[folder stringByAppendingPathComponent:source] atomically:YES]) {
+                [fm removeItemAtPath:folder error:nil];
+                if (errorText) *errorText = @"No se pudo guardar un archivo del parche.";
+                return nil;
+            }
+            [files addObject:@{@"source": source, @"target": rules[i][@"relativePath"]}];
+        }
+        NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"name": name, @"bundleID": bid, @"files": files}
+                                                       options:NSJSONWritingPrettyPrinted | NSJSONWritingWithoutEscapingSlashes error:nil];
+        [json writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES];
+        NSString *check = nil;
+        if (!wq_patch_read(folder, &check)) {
+            [fm removeItemAtPath:folder error:nil];
+            if (errorText) *errorText = check ?: @"El parche importado no es válido.";
+            return nil;
+        }
+        [created addObject:[NSString stringWithFormat:@"%@ (%@)", name, bid]];
+    }
+    return created;
+}
+
 // Two distinct document picker modes for WQPatchesViewController itself:
 typedef NS_ENUM(NSInteger, WQPickerMode) {
     WQPickerModeImportDM,   // "Importar parche (.dm)" — picks a .dm file
+    WQPickerModeImport3105, // "Importar parche 3105 (.3105)"
 };
 
 @interface WQPatchesViewController () <UIDocumentPickerDelegate, WQPatchFormDelegate>
@@ -1398,6 +1727,12 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
                        identifier:nil
                           handler:^(UIAction *__unused a) { [weakSelf importDM]; }];
 
+    UIAction *import3105Action =
+        [UIAction actionWithTitle:@"Importar parche 3105 (.3105)"
+                            image:[UIImage systemImageNamed:@"square.and.arrow.down.on.square"]
+                       identifier:nil
+                          handler:^(UIAction *__unused a) { [weakSelf import3105]; }];
+
     UIAction *createAction =
         [UIAction actionWithTitle:@"Crear parche"
                             image:[UIImage systemImageNamed:@"plus.app.fill"]
@@ -1406,7 +1741,7 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
 
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
-                                          menu:[UIMenu menuWithChildren:@[importAction, createAction]]];
+                                          menu:[UIMenu menuWithChildren:@[importAction, import3105Action, createAction]]];
 }
 
 // ---- viewWillAppear / reload -------------------------------------------
@@ -1458,6 +1793,61 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     }
     _patches = items;
     [self.tableView reloadData];
+}
+
+// ---- Import .3105 ------------------------------------------------------
+
+- (void)import3105
+{
+    _pickerMode = WQPickerModeImport3105;
+    // Any file can be picked; the 3105PATCH header is checked when it is read.
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)handleImport3105Data:(NSData *)data password:(NSString *_Nullable)password
+{
+    UIAlertController *busy = wq_alert_controller(@"Leyendo parche 3105…", nil, UIAlertControllerStyleAlert);
+    [self presentViewController:busy animated:YES completion:nil];
+    dispatch_async(wq_io(), ^{
+        NSString *error = nil;
+        BOOL needsPassword = NO;
+        NSDictionary *package = wq_3105_decode(data, password, &error, &needsPassword);
+        NSArray<NSString *> *created = package ? wq_3105_install(package, &error) : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [busy dismissViewControllerAnimated:YES completion:^{
+                if (needsPassword) { [self ask3105PasswordForData:data wrong:password.length > 0]; return; }
+                if (!created) { wq_alert(self, @"Importar parche 3105", error ?: @"No se pudo importar el parche."); return; }
+                NSUInteger skipped = [package[@"skipped"] unsignedIntegerValue];
+                NSString *message = [created componentsJoinedByString:@"\n"];
+                if (skipped)
+                    message = [message stringByAppendingFormat:@"\n\nSe omitieron %lu regla(s) que DM FILES aún no soporta (App Group o fusión de plist/JSON).", (unsigned long)skipped];
+                wq_alert(self, @"Parche 3105 importado", message);
+                [self reload];
+            }];
+        });
+    });
+}
+
+- (void)ask3105PasswordForData:(NSData *)data wrong:(BOOL)wrong
+{
+    UIAlertController *alert = wq_alert_controller(@"Parche protegido",
+        wrong ? @"Contraseña incorrecta. Inténtalo de nuevo." : @"Escribe la contraseña de este parche.", UIAlertControllerStyleAlert);
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.secureTextEntry = YES;
+        field.placeholder = @"Contraseña";
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    __weak typeof(self) weakSelf = self;
+    __weak UIAlertController *weakAlert = alert;
+    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
+    [alert addAction:wq_alert_action(@"Abrir", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
+        [weakSelf handleImport3105Data:data password:weakAlert.textFields.firstObject.text];
+    })];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 // ---- Import .dm --------------------------------------------------------
@@ -1590,6 +1980,10 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
     // WQPatchesViewController only uses the picker for .dm import.
     if (_pickerMode == WQPickerModeImportDM) {
         [self handleImportDMAtURL:url];
+    } else if (_pickerMode == WQPickerModeImport3105) {
+        NSData *data = [NSData dataWithContentsOfURL:url];
+        if (!data) { wq_alert(self, @"Importar parche 3105", @"No se pudo leer el archivo."); return; }
+        [self handleImport3105Data:data password:nil];
     }
 }
 
