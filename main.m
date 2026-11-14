@@ -3186,6 +3186,13 @@ static NSString *wq_deleted_place(NSString *original)
 @property (nonatomic, copy, nullable) void (^onPassed)(NSArray<WQHealthCheck *> *checks);
 @end
 
+// The gradient behind the start screen's hero card.
+@interface WQGradientCardView : UIView
+@end
+@implementation WQGradientCardView
++ (Class)layerClass { return CAGradientLayer.class; }
+@end
+
 @interface WQRootViewController : UITableViewController
 @end
 
@@ -3349,7 +3356,6 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     // Bundle containers open on some iOS versions only (found by the startup check).
     if (wq_app_bundles_reachable())
         [explore addObject:wq_row(@"bundles", @"App Bundles", @"app.badge.fill", UIColor.systemTealColor)];
-    [explore addObject:wq_row(@"patches", @"Patches", @"bandage.fill", UIColor.systemYellowColor)];
     [explore addObject:wq_row(@"goto", @"Go to Path…", @"arrow.right.circle.fill", UIColor.systemGrayColor)];
 
     NSArray *backups = @[
@@ -3403,62 +3409,150 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     return nil;
 }
 
-// Three big tiles for what is used most: solid color, or translucent glass.
+// The start screen's top: a hero card in the accent color and a 2x2 grid of
+// cards for what is used most (solid, or translucent glass).
 - (UIView *)homeHeader
 {
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 124)];
+    BOOL glass = wq_glass_enabled();
+    __weak typeof(self) weakSelf = self;
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 426)];
+
+    // ---- Hero ----
+    WQGradientCardView *hero = [WQGradientCardView new];
+    hero.translatesAutoresizingMaskIntoConstraints = NO;
+    hero.layer.cornerRadius = 28;
+    hero.layer.cornerCurve = kCACornerCurveContinuous;
+    hero.clipsToBounds = YES;
+    UIColor *accent = wq_accent_color();
+    CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
+    [accent getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha];
+    UIColor *second = [UIColor colorWithHue:fmod(hue + 0.09, 1.0) saturation:MIN(1.0, saturation * 0.9 + 0.1)
+                                 brightness:brightness * 0.78 alpha:1];
+    CAGradientLayer *gradient = (CAGradientLayer *)hero.layer;
+    gradient.colors = @[(id)accent.CGColor, (id)second.CGColor];
+    gradient.startPoint = CGPointMake(0, 0);
+    gradient.endPoint = CGPointMake(1, 1);
+
+    UIImageSymbolConfiguration *decorConfig = [UIImageSymbolConfiguration configurationWithPointSize:150 weight:UIImageSymbolWeightBold];
+    UIImageView *decor = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"folder.fill" withConfiguration:decorConfig]];
+    decor.tintColor = [UIColor.whiteColor colorWithAlphaComponent:0.14];
+    decor.contentMode = UIViewContentModeScaleAspectFit;
+    decor.transform = CGAffineTransformMakeRotation(-0.2);
+    decor.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:decor];
+
+    UILabel *title = [UILabel new];
+    UIFont *base = [UIFont systemFontOfSize:34 weight:UIFontWeightHeavy];
+    UIFontDescriptor *rounded = [base.fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignRounded];
+    title.font = rounded ? [UIFont fontWithDescriptor:rounded size:34] : base;
+    title.text = @"DM FILES";
+    title.textColor = UIColor.whiteColor;
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:title];
+
+    UILabel *device = [UILabel new];
+    device.text = wq_device_line();
+    device.numberOfLines = 2;
+    device.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightMedium];
+    device.textColor = [UIColor.whiteColor colorWithAlphaComponent:0.85];
+    device.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:device];
+
+    UIButtonConfiguration *chip = [UIButtonConfiguration plainButtonConfiguration];
+    chip.image = wq_telegram_icon(18);
+    chip.imagePadding = 6;
+    chip.contentInsets = NSDirectionalEdgeInsetsMake(6, 10, 6, 12);
+    chip.attributedTitle = [[NSAttributedString alloc] initWithString:@"t.me/didierxit7"
+        attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold],
+                     NSForegroundColorAttributeName: UIColor.whiteColor}];
+    UIBackgroundConfiguration *chipBackground = [UIBackgroundConfiguration clearConfiguration];
+    chipBackground.backgroundColor = [UIColor.whiteColor colorWithAlphaComponent:0.22];
+    chipBackground.cornerRadius = 16;
+    chip.background = chipBackground;
+    UIButton *telegram = [UIButton buttonWithConfiguration:chip primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
+        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://t.me/didierxit7"] options:@{} completionHandler:nil];
+    }]];
+    telegram.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:telegram];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [decor.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:28],
+        [decor.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:34],
+        [decor.widthAnchor constraintEqualToConstant:170],
+        [decor.heightAnchor constraintEqualToConstant:170],
+        [title.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:22],
+        [title.topAnchor constraintEqualToAnchor:hero.topAnchor constant:24],
+        [device.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:22],
+        [device.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-22],
+        [device.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4],
+        [telegram.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:18],
+        [telegram.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-18],
+        [telegram.heightAnchor constraintEqualToConstant:32],
+    ]];
+    [header addSubview:hero];
+
+    // ---- 2x2 cards ----
     NSArray *tiles = @[
         @[@"appdata", @"App Data", @"square.grid.2x2.fill", UIColor.systemBlueColor],
         @[@"apps", @"Apps", @"app.fill", UIColor.systemGreenColor],
+        @[@"patches", @"Patches", @"bandage.fill", UIColor.systemPurpleColor],
         @[@"cache", @"Cache Cleaner", @"sparkles", UIColor.systemOrangeColor],
     ];
-    BOOL glass = wq_glass_enabled();
-    __weak typeof(self) weakSelf = self;
-    NSMutableArray<UIButton *> *buttons = [NSMutableArray new];
-    for (NSArray *tile in tiles) {
-        NSString *rid = tile[0];
-        UIColor *color = wq_colored_icons() ? tile[3] : wq_accent_color();
-        UIButtonConfiguration *cfg = glass ? [UIButtonConfiguration plainButtonConfiguration]
-                                           : [UIButtonConfiguration filledButtonConfiguration];
-        UIColor *foreground = glass ? color : UIColor.whiteColor;
-        cfg.attributedTitle = [[NSAttributedString alloc] initWithString:WQLocalized(tile[1])
-            attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold],
-                         NSForegroundColorAttributeName: glass ? UIColor.labelColor : foreground}];
-        cfg.image = [UIImage systemImageNamed:tile[2]];
-        cfg.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:26 weight:UIImageSymbolWeightSemibold];
-        cfg.imagePlacement = NSDirectionalRectEdgeTop;
-        cfg.imagePadding = 10;
-        cfg.baseForegroundColor = foreground;
-        cfg.cornerStyle = UIButtonConfigurationCornerStyleLarge;
-        cfg.titleLineBreakMode = NSLineBreakByTruncatingTail;
-        cfg.contentInsets = NSDirectionalEdgeInsetsMake(16, 6, 14, 6);
-        if (glass) {
-            UIBackgroundConfiguration *background = cfg.background;
-            background.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
-            background.backgroundColor = [color colorWithAlphaComponent:0.16];
-            background.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.30];
-            background.strokeWidth = 0.5;
+    NSMutableArray<UIStackView *> *rows = [NSMutableArray new];
+    for (NSUInteger row = 0; row < 2; row++) {
+        NSMutableArray<UIButton *> *buttons = [NSMutableArray new];
+        for (NSUInteger column = 0; column < 2; column++) {
+            NSArray *tile = tiles[row * 2 + column];
+            NSString *rid = tile[0];
+            UIColor *color = wq_colored_icons() ? tile[3] : accent;
+            UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
+            cfg.image = wq_badge(tile[2], tile[3]);
+            cfg.imagePlacement = NSDirectionalRectEdgeTop;
+            cfg.imagePadding = 12;
+            cfg.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+            cfg.contentInsets = NSDirectionalEdgeInsetsMake(16, 16, 16, 16);
+            cfg.attributedTitle = [[NSAttributedString alloc] initWithString:WQLocalized(tile[1])
+                attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold],
+                             NSForegroundColorAttributeName: UIColor.labelColor}];
+            UIBackgroundConfiguration *background = [UIBackgroundConfiguration clearConfiguration];
+            background.cornerRadius = 22;
+            if (glass) {
+                background.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+                background.backgroundColor = [color colorWithAlphaComponent:0.10];
+                background.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.30];
+                background.strokeWidth = 0.5;
+            } else {
+                background.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
+            }
             cfg.background = background;
-        } else {
-            cfg.baseBackgroundColor = color;
+            UIButton *button = [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
+                [weakSelf openRow:rid];
+            }]];
+            button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+            button.accessibilityLabel = WQLocalized(tile[1]);
+            [button.heightAnchor constraintEqualToConstant:104].active = YES;
+            [buttons addObject:button];
         }
-        UIButton *button = [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
-            [weakSelf openRow:rid];
-        }]];
-        button.accessibilityLabel = WQLocalized(tile[1]);
-        [buttons addObject:button];
+        UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:buttons];
+        line.axis = UILayoutConstraintAxisHorizontal;
+        line.distribution = UIStackViewDistributionFillEqually;
+        line.spacing = 12;
+        [rows addObject:line];
     }
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:buttons];
-    stack.axis = UILayoutConstraintAxisHorizontal;
-    stack.distribution = UIStackViewDistributionFillEqually;
-    stack.spacing = 12;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addSubview:stack];
+    UIStackView *grid = [[UIStackView alloc] initWithArrangedSubviews:rows];
+    grid.axis = UILayoutConstraintAxisVertical;
+    grid.spacing = 12;
+    grid.translatesAutoresizingMaskIntoConstraints = NO;
+    [header addSubview:grid];
+
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20],
-        [stack.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20],
-        [stack.topAnchor constraintEqualToAnchor:header.topAnchor constant:6],
-        [stack.heightAnchor constraintEqualToConstant:104],
+        [hero.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
+        [hero.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
+        [hero.topAnchor constraintEqualToAnchor:header.topAnchor constant:6],
+        [hero.heightAnchor constraintEqualToConstant:176],
+        [grid.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
+        [grid.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
+        [grid.topAnchor constraintEqualToAnchor:hero.bottomAnchor constant:14],
     ]];
     return header;
 }
@@ -3490,6 +3584,14 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     self.tableView.tableHeaderView = [self homeHeader];
     [self rebuildLocations];
     [self.tableView reloadData];
+    // The hero card is the title; the other screens get their bar back.
+    [self.navigationController setNavigationBarHidden:YES animated:animated];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    [self.navigationController setNavigationBarHidden:NO animated:animated];
 }
 
 - (void)viewDidLayoutSubviews
@@ -3569,27 +3671,11 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     [host presentViewController:alert animated:YES completion:nil];
 }
 
-// A small Telegram link under the last section. Version and credits
-// (WQ Files by kolbicz, worse_query, GPL-3.0) are in Settings → About.
+// Breathing space under the last section. The Telegram link is in the hero card;
+// version and credits (WQ Files by kolbicz, worse_query, GPL-3.0) are in Settings → About.
 - (UIView *)authorFooter
 {
-    UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 64)];
-    UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
-    cfg.image = wq_telegram_icon(16);
-    cfg.imagePadding = 6;
-    cfg.attributedTitle = [[NSAttributedString alloc] initWithString:@"t.me/didierxit7"
-        attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12 weight:UIFontWeightMedium],
-                     NSForegroundColorAttributeName: UIColor.secondaryLabelColor}];
-    UIButton *button = [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://t.me/didierxit7"] options:@{} completionHandler:nil];
-    }]];
-    button.translatesAutoresizingMaskIntoConstraints = NO;
-    [footer addSubview:button];
-    [NSLayoutConstraint activateConstraints:@[
-        [button.centerXAnchor constraintEqualToAnchor:footer.centerXAnchor],
-        [button.topAnchor constraintEqualToAnchor:footer.topAnchor constant:8],
-    ]];
-    return footer;
+    return [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 24)];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return (NSInteger)_sections.count; }
