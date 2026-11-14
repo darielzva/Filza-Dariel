@@ -20,11 +20,7 @@
 #import "WQDir.h"
 #import "WQApps.h"
 
-// WQAppsViewController exposes the patch route picker delegate so that
-// WQDirViewController can deliver the selected path back to the form.
-@interface WQAppsViewController (WQPatchRoutePicker)
-@property (nonatomic, weak, nullable) id<WQPatchRoutePickerDelegate> patchRoutePickerDelegate;
-@end
+// WQAppsViewController (WQPatchRoutePicker) @interface lives in WQUI.h.
 @implementation WQAppsViewController (WQPatchRoutePicker)
 // The property is backed by an associated object so it doesn't require
 // touching WQApps.m or WQApps.h.
