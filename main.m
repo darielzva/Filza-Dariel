@@ -10,6 +10,7 @@
 
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
 #import "WQAccess.h"
@@ -18,6 +19,23 @@
 #import "WQSharing.h"
 #import "WQDir.h"
 #import "WQApps.h"
+
+// WQAppsViewController exposes the patch route picker delegate so that
+// WQDirViewController can deliver the selected path back to the form.
+@interface WQAppsViewController (WQPatchRoutePicker)
+@property (nonatomic, weak, nullable) id<WQPatchRoutePickerDelegate> patchRoutePickerDelegate;
+@end
+@implementation WQAppsViewController (WQPatchRoutePicker)
+// The property is backed by an associated object so it doesn't require
+// touching WQApps.m or WQApps.h.
+- (void)setPatchRoutePickerDelegate:(id<WQPatchRoutePickerDelegate>)delegate {
+    objc_setAssociatedObject(self, @selector(patchRoutePickerDelegate),
+                             delegate, OBJC_ASSOCIATION_ASSIGN);
+}
+- (id<WQPatchRoutePickerDelegate>)patchRoutePickerDelegate {
+    return objc_getAssociatedObject(self, @selector(patchRoutePickerDelegate));
+}
+@end
 #import "WQCache.h"
 #import "WQCore.h"
 #import "WQPlistEditor.h"
@@ -2100,6 +2118,70 @@ static NSString *wq_temp_work_dir(NSString *prefix)
             WQItem *latest = currentItem();
             if (latest) UIPasteboard.generalPasteboard.string = latest.path;
         }]];
+        // "Crear parche en esta ruta" — only for regular files inside an app data container.
+        // Derives a relative path (Documents/…) by stripping the container UUID prefix,
+        // and delivers it to whoever pushed this WQDirViewController as a route picker.
+        if (!current.isDir && current.isRegular) {
+            // Walk up from item.path to find the UUID container root:
+            // /private/var/mobile/Containers/Data/Application/<UUID>/<relative>
+            NSString *absPath = current.path;
+            static NSString *const kContainerBase = @"/private/var/mobile/Containers/Data/Application/";
+            NSString *relativePath = nil;
+            NSString *containerBundleID = nil;
+            if ([absPath hasPrefix:kContainerBase]) {
+                NSString *afterBase = [absPath substringFromIndex:kContainerBase.length];
+                NSRange slash = [afterBase rangeOfString:@"/"];
+                if (slash.location != NSNotFound) {
+                    NSString *uuid      = [afterBase substringToIndex:slash.location];
+                    NSString *container = [kContainerBase stringByAppendingString:uuid];
+                    relativePath    = [afterBase substringFromIndex:slash.location + 1];
+                    containerBundleID = wq_container_label(container)
+                                        ?: wq_bundle_id_for_container(container);
+                    // Only keep paths that start with a valid iOS sandbox directory.
+                    if (!(  [relativePath hasPrefix:@"Documents/"]
+                          || [relativePath hasPrefix:@"Library/"]
+                          || [relativePath hasPrefix:@"tmp/"])) {
+                        relativePath = nil;
+                    }
+                }
+            }
+            if (relativePath.length) {
+                NSString *capturedRelPath = relativePath;
+                NSString *capturedBID     = containerBundleID;
+                [actions addObject:[UIAction actionWithTitle:@"Crear parche en esta ruta"
+                                                       image:[UIImage systemImageNamed:@"bandage.fill"]
+                                                  identifier:nil
+                                                     handler:^(UIAction *__unused a) {
+                    WQDirViewController *strongSelf = weakSelf;
+                    if (!strongSelf) return;
+                    // If we were pushed as a route picker, deliver the result back.
+                    id<WQPatchRoutePickerDelegate> pickerDelegate = nil;
+                    UINavigationController *nav = strongSelf.navigationController;
+                    for (UIViewController *vc in nav.viewControllers.reverseObjectEnumerator) {
+                        if ([vc conformsToProtocol:@protocol(WQPatchRoutePickerDelegate)]) {
+                            pickerDelegate = (id<WQPatchRoutePickerDelegate>)vc;
+                            break;
+                        }
+                        // Check WQAppsViewController carrying the delegate.
+                        if ([vc isKindOfClass:[WQAppsViewController class]]) {
+                            id<WQPatchRoutePickerDelegate> d =
+                                ((WQAppsViewController *)vc).patchRoutePickerDelegate;
+                            if (d) { pickerDelegate = d; break; }
+                        }
+                    }
+                    if (pickerDelegate) {
+                        [pickerDelegate patchRoutePickerDidSelectPath:capturedRelPath
+                                                             bundleID:capturedBID ?: @""];
+                    } else {
+                        // Not in picker mode — push to Patches and open the create form.
+                        WQPatchesViewController *patches =
+                            [[WQPatchesViewController alloc] initWithPrefilledPath:capturedRelPath
+                                                                          bundleID:capturedBID];
+                        [nav pushViewController:patches animated:YES];
+                    }
+                }]];
+            }
+        }
         if (current.label) {
             [actions addObject:[UIAction actionWithTitle:WQLocalizedNullable(@"Copy Identifier") image:[UIImage systemImageNamed:@"tag"]
                                               identifier:nil handler:^(UIAction *__unused a) {
