@@ -962,6 +962,7 @@ UIImage *wq_telegram_icon(CGFloat side)
             @{@"text": WQLocalized(@"On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files.")},
         ]},
         @{@"title": WQLocalized(@"Credits"), @"rows": @[
+            @{@"title": @"DM FILES", @"detail": @"@didierxit7", @"url": @"https://t.me/didierxit7", @"telegram": @YES},
             @{@"title": @"WQ Files", @"detail": @"kolbicz", @"url": @"https://github.com/kolbicz/WQFiles"},
             @{@"title": @"worse_query", @"detail": @"@forcequitOS", @"url": @"https://github.com/forcequitOS/worse_query"},
             @{@"title": @"3105 (.3105)", @"detail": @"YangJiii", @"url": @"https://github.com/YangJiiii/3105"},
