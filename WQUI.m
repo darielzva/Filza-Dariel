@@ -281,12 +281,151 @@ static UIImage *wq_service_tile(NSString *bundleID)
 // Rounded app icon for a bundle id, cached. Falls back to the closest parent
 // app's icon (extensions: com.foo.app.widget -> com.foo.app), then to a
 // neutral service tile. Nil only without a bundle id.
-UIImage *wq_app_icon(NSString *bundleID)
+#pragma mark - Icons from the App Store
+
+// iOS 27 hands this app the icons of Apple's apps but not those of other apps,
+// and their folders can't be opened. For those, the icon is fetched once from
+// the App Store (itunes.apple.com/lookup by bundle ID) and kept on disk.
+// Settings → Appearance → "Iconos de la App Store" turns it off.
+static NSString *const kWQStoreIconsPref = @"WQStoreIcons";
+
+static BOOL wq_store_icons_enabled(void)
 {
-    if (!bundleID.length) return nil;
+    id v = [NSUserDefaults.standardUserDefaults objectForKey:kWQStoreIconsPref];
+    return v ? [v boolValue] : YES;
+}
+
+static NSCache *wq_icon_cache(void)
+{
     static NSCache *cache;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ cache = [NSCache new]; });
+    return cache;
+}
+
+static NSString *wq_store_icon_path(NSString *bundleID, NSString *extension)
+{
+    static NSString *dir;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+        dir = [caches stringByAppendingPathComponent:@"DMIcons"];
+        [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    });
+    return [dir stringByAppendingPathComponent:[bundleID stringByAppendingPathExtension:extension]];
+}
+
+static UIImage *wq_store_icon_cached(NSString *bundleID)
+{
+    UIImage *image = [UIImage imageWithContentsOfFile:wq_store_icon_path(bundleID, @"img")];
+    return image.CGImage ? image : nil;
+}
+
+static UITableView *wq_visible_table(void)
+{
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState != UISceneActivationStateForegroundActive) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if (!window.isKeyWindow) continue;
+            UIViewController *vc = window.rootViewController;
+            while (vc) {
+                if ([vc isKindOfClass:UINavigationController.class]) vc = ((UINavigationController *)vc).visibleViewController;
+                else if (vc.presentedViewController) vc = vc.presentedViewController;
+                else break;
+            }
+            if ([vc isKindOfClass:UITableViewController.class]) return ((UITableViewController *)vc).tableView;
+        }
+    }
+    return nil;
+}
+
+// A new icon arrived: redraw the visible rows (several at once count as one).
+static void wq_icons_changed(void)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static BOOL pending;
+        if (pending) return;
+        pending = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            pending = NO;
+            UITableView *table = wq_visible_table();
+            NSArray<NSIndexPath *> *visible = table.indexPathsForVisibleRows;
+            if (visible.count) [table reloadRowsAtIndexPaths:visible withRowAnimation:UITableViewRowAnimationNone];
+        });
+    });
+}
+
+static NSURLSession *wq_icon_session(void)
+{
+    static NSURLSession *session;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+        config.HTTPMaximumConnectionsPerHost = 3;
+        config.timeoutIntervalForRequest = 15;
+        session = [NSURLSession sessionWithConfiguration:config];
+    });
+    return session;
+}
+
+static void wq_store_lookup(NSString *bundleID, NSArray<NSString *> *countries, NSUInteger index)
+{
+    if (index >= countries.count) {   // not on the App Store: don't ask again for a week
+        [@"" writeToFile:wq_store_icon_path(bundleID, @"none") atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+    NSURLComponents *components = [NSURLComponents componentsWithString:@"https://itunes.apple.com/lookup"];
+    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"bundleId" value:bundleID],
+                              [NSURLQueryItem queryItemWithName:@"country" value:countries[index]]];
+    [[wq_icon_session() dataTaskWithURL:components.URL completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSHTTPURLResponse *http = [response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)response : nil;
+        if (error || http.statusCode != 200 || !data) return;   // network trouble: try again next launch
+        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        NSArray *results = [json isKindOfClass:NSDictionary.class] ? json[@"results"] : nil;
+        NSDictionary *first = [results.firstObject isKindOfClass:NSDictionary.class] ? results.firstObject : nil;
+        NSString *art = first[@"artworkUrl512"] ?: first[@"artworkUrl100"];
+        NSURL *artURL = [art isKindOfClass:NSString.class] ? [NSURL URLWithString:art] : nil;
+        if (!artURL || ![artURL.scheme isEqualToString:@"https"]) {
+            wq_store_lookup(bundleID, countries, index + 1);
+            return;
+        }
+        [[wq_icon_session() dataTaskWithURL:artURL completionHandler:^(NSData *image, NSURLResponse *artResponse, NSError *artError) {
+            NSHTTPURLResponse *artHTTP = [artResponse isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)artResponse : nil;
+            UIImage *decoded = (!artError && artHTTP.statusCode == 200 && image) ? [UIImage imageWithData:image] : nil;
+            if (!decoded.CGImage) return;
+            [image writeToFile:wq_store_icon_path(bundleID, @"img") atomically:YES];
+            [wq_icon_cache() removeObjectForKey:bundleID];
+            wq_icons_changed();
+        }] resume];
+    }] resume];
+}
+
+// Starts the download for an app, once per launch. Does nothing while a recent
+// "not on the App Store" note exists.
+static void wq_store_icon_request(NSString *bundleID)
+{
+    if ([bundleID containsString:@"/"] || ![bundleID containsString:@"."]) return;
+    static NSMutableSet<NSString *> *started;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ started = [NSMutableSet new]; });
+    @synchronized (started) {
+        if ([started containsObject:bundleID]) return;
+        [started addObject:bundleID];
+    }
+    NSDictionary *note = [NSFileManager.defaultManager attributesOfItemAtPath:wq_store_icon_path(bundleID, @"none") error:nil];
+    NSDate *noted = note[NSFileModificationDate];
+    if (noted && -[noted timeIntervalSinceNow] < 7 * 24 * 3600) return;
+    NSMutableArray<NSString *> *countries = [NSMutableArray new];
+    NSString *country = [[NSLocale.currentLocale objectForKey:NSLocaleCountryCode] lowercaseString];
+    if (country.length == 2) [countries addObject:country];
+    if (![countries containsObject:@"us"]) [countries addObject:@"us"];
+    wq_store_lookup(bundleID, countries, 0);
+}
+
+UIImage *wq_app_icon(NSString *bundleID)
+{
+    if (!bundleID.length) return nil;
+    NSCache *cache = wq_icon_cache();
     UIImage *cached = [cache objectForKey:bundleID];
     if (cached) return cached;
     // The bundle fallback reads files and may ask for access: never on the
@@ -301,6 +440,11 @@ UIImage *wq_app_icon(NSString *bundleID)
     {
         NSString *parent = [[parts subarrayWithRange:NSMakeRange(0, (NSUInteger)n)] componentsJoinedByString:@"."];
         raw = wq_real_icon(parent) ?: (background ? wq_bundle_icon(parent) : nil);
+    }
+    // Apps from the store whose icon iOS doesn't give: the App Store's artwork.
+    if (!raw && wq_store_icons_enabled() && ![bundleID hasPrefix:@"com.apple."] && wq_is_regular_app(bundleID)) {
+        raw = wq_store_icon_cached(bundleID);
+        if (!raw) wq_store_icon_request(bundleID);
     }
     UIImage *icon = raw ? wq_round_icon(raw) : wq_service_tile(bundleID);
     if (raw || background) [cache setObject:icon forKey:bundleID];
@@ -597,8 +741,13 @@ UIImage *wq_telegram_icon(CGFloat side)
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    static const NSInteger counts[4] = {3, 2, 1, 1};
+    static const NSInteger counts[4] = {3, 3, 1, 1};
     return counts[section];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
+{
+    return section == 1 ? @"Iconos de la App Store: para las apps cuyo icono iOS no entrega (Free Fire, Instagram…), la app consulta itunes.apple.com con el ID del paquete, descarga el icono y lo guarda en caché. Solo se envía el ID de esas apps." : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
@@ -624,16 +773,18 @@ UIImage *wq_telegram_icon(CGFloat side)
         return cell;
     }
     if (indexPath.section == 1) {
-        BOOL glass = indexPath.row == 0;
-        c.text = WQLocalized(glass ? @"Glass Effect" : @"Colored Icons");
-        c.image = [UIImage systemImageNamed:glass ? @"square.on.square.intersection.dashed" : @"paintpalette.fill"];
+        NSInteger option = indexPath.row;   // 0 glass, 1 colored icons, 2 icons from the App Store
+        c.text = option == 0 ? WQLocalized(@"Glass Effect") : option == 1 ? WQLocalized(@"Colored Icons") : @"Iconos de la App Store";
+        c.image = [UIImage systemImageNamed:option == 0 ? @"square.on.square.intersection.dashed" : option == 1 ? @"paintpalette.fill" : @"arrow.down.app.fill"];
         cell.contentConfiguration = c;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         UISwitch *toggle = [UISwitch new];
-        toggle.on = glass ? wq_glass_enabled() : wq_colored_icons();
+        toggle.on = option == 0 ? wq_glass_enabled() : option == 1 ? wq_colored_icons() : wq_store_icons_enabled();
         [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
             BOOL on = ((UISwitch *)action.sender).on;
-            if (glass) wq_set_glass_enabled(on); else wq_set_colored_icons(on);
+            if (option == 0) wq_set_glass_enabled(on);
+            else if (option == 1) wq_set_colored_icons(on);
+            else [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQStoreIconsPref];
             [weakSelf changed];
         }] forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
