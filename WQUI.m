@@ -11,6 +11,7 @@
 #import "WQDir.h"
 #import "WQLaunchServices.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 #import <CommonCrypto/CommonCrypto.h>
 #import <fcntl.h>
 #import <sys/stat.h>
@@ -630,28 +631,92 @@ void wq_apply_appearance(UIWindow *window)
 }
 @end
 
+static const void *kWQGlassCellKey = &kWQGlassCellKey;
+
 void wq_style_table(UITableView *table)
 {
-    table.backgroundView = wq_glass_enabled() ? [WQGradientView new] : nil;
+    if (wq_glass_enabled()) table.backgroundView = [WQGradientView new];
+    else if ([table.backgroundView isKindOfClass:WQGradientView.class]) table.backgroundView = nil;
+}
+
+void wq_style_view_controller(UIViewController *vc)
+{
+    UITableView *table = nil;
+    if ([vc isKindOfClass:UITableViewController.class]) table = ((UITableViewController *)vc).tableView;
+    else if ([vc.viewIfLoaded isKindOfClass:UITableView.class]) table = (UITableView *)vc.viewIfLoaded;
+    if (table) wq_style_table(table);
 }
 
 void wq_style_cell(UITableViewCell *cell)
 {
     if (!wq_glass_enabled()) {
-        cell.configurationUpdateHandler = nil;
-        cell.backgroundConfiguration = nil;
+        if (objc_getAssociatedObject(cell, kWQGlassCellKey)) {   // only undo what this function did
+            cell.configurationUpdateHandler = nil;
+            cell.backgroundConfiguration = nil;
+            objc_setAssociatedObject(cell, kWQGlassCellKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
         return;
     }
+    objc_setAssociatedObject(cell, kWQGlassCellKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     cell.configurationUpdateHandler = ^(UITableViewCell *c, UICellConfigurationState *state) {
+        UITableView *table = nil;
+        for (UIView *view = c.superview; view; view = view.superview)
+            if ([view isKindOfClass:UITableView.class]) { table = (UITableView *)view; break; }
+        BOOL pressed = state.highlighted || state.selected;
         UIBackgroundConfiguration *bg = [[UIBackgroundConfiguration listCellConfiguration] updatedConfigurationForState:state];
-        bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
-        bg.backgroundColor = (state.highlighted || state.selected) ? [UIColor.labelColor colorWithAlphaComponent:0.10]
-                                                                         : UIColor.clearColor;
-        bg.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.28];
-        bg.strokeWidth = 0.5;
+        if (table && table.style == UITableViewStylePlain) {
+            // Long lists: a translucent fill (a blur on every row would be heavy to scroll).
+            bg.backgroundColor = pressed ? [UIColor.labelColor colorWithAlphaComponent:0.10]
+                                         : [UIColor.systemBackgroundColor colorWithAlphaComponent:0.55];
+        } else {
+            bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+            bg.backgroundColor = pressed ? [UIColor.labelColor colorWithAlphaComponent:0.10] : UIColor.clearColor;
+            bg.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.28];
+            bg.strokeWidth = 0.5;
+        }
         c.backgroundConfiguration = bg;
     };
 }
+
+// Every list in the app gets the glass look without each screen asking for it:
+// a cell that appears is styled, unless its screen made its own look.
+static void wq_style_cell_auto(UITableViewCell *cell)
+{
+    if (cell.backgroundView) return;
+    BOOL ours = objc_getAssociatedObject(cell, kWQGlassCellKey) != nil;
+    if (cell.configurationUpdateHandler && !ours) return;
+    if (!wq_glass_enabled() && !ours) return;
+    wq_style_cell(cell);
+}
+
+@interface UITableViewCell (WQGlass)
+@end
+
+@implementation UITableViewCell (WQGlass)
+
++ (void)load
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class cls = UITableViewCell.class;
+        SEL originalSelector = @selector(didMoveToWindow), swizzledSelector = @selector(wq_didMoveToWindow);
+        Method original = class_getInstanceMethod(cls, originalSelector);
+        Method swizzled = class_getInstanceMethod(cls, swizzledSelector);
+        // didMoveToWindow belongs to UIView: add it to the cell class first so only cells change.
+        if (class_addMethod(cls, originalSelector, method_getImplementation(swizzled), method_getTypeEncoding(swizzled)))
+            class_replaceMethod(cls, swizzledSelector, method_getImplementation(original), method_getTypeEncoding(original));
+        else
+            method_exchangeImplementations(original, swizzled);
+    });
+}
+
+- (void)wq_didMoveToWindow
+{
+    [self wq_didMoveToWindow];   // the original implementation
+    if (self.window) wq_style_cell_auto(self);
+}
+
+@end
 
 UIImage *wq_badge_image(NSString *symbol, UIColor *color)
 {
