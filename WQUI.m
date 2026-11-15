@@ -104,7 +104,7 @@ static void wq_icon_note(NSString *bundleID, NSString *what)
 {
     static NSUInteger notes;
     @synchronized (NSNull.null) {
-        if (notes >= 8) return;
+        if (notes >= 30) return;
         notes++;
     }
     wq_log(@"icon: %@: %@", bundleID, what);
@@ -146,6 +146,37 @@ static UIImage *wq_bundle_icon(NSString *bundleID)
                 return image;
             }
         }
+    }
+    // Not under the usual names: take the largest square icon-like PNG that
+    // sits in the app bundle (games often name theirs differently).
+    NSFileManager *fm = NSFileManager.defaultManager;
+    UIImage *best = nil;
+    NSString *bestName = nil;
+    CGFloat bestPixels = 0;
+    for (NSString *file in [fm contentsOfDirectoryAtPath:path error:nil]) {
+        NSString *lower = file.lowercaseString;
+        if (![lower hasSuffix:@".png"] || ![lower containsString:@"icon"]) continue;
+        if ([lower containsString:@"launch"] || [lower containsString:@"splash"] || [lower containsString:@"notification"]) continue;
+        UIImage *image = [UIImage imageWithContentsOfFile:[path stringByAppendingPathComponent:file]];
+        if (!image.CGImage || fabs(image.size.width - image.size.height) > 1) continue;
+        CGFloat pixels = image.size.width * image.scale;
+        if (pixels > bestPixels) { best = image; bestPixels = pixels; bestName = file; }
+    }
+    if (best) {
+        wq_icon_note(bundleID, [NSString stringWithFormat:@"loaded %@ from the app (searched the bundle)", bestName]);
+        return best;
+    }
+    // App Store apps keep their artwork next to the .app, in the bundle container.
+    NSString *container = path.stringByDeletingLastPathComponent;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        for (NSString *name in @[@"iTunesArtwork@3x", @"iTunesArtwork@2x", @"iTunesArtwork"]) {
+            UIImage *image = [UIImage imageWithContentsOfFile:[container stringByAppendingPathComponent:name]];
+            if (image.CGImage) {
+                wq_icon_note(bundleID, [NSString stringWithFormat:@"loaded %@ from the app's container", name]);
+                return image;
+            }
+        }
+        if (attempt == 0 && !wq_grant(container)) break;
     }
     wq_icon_note(bundleID, [NSString stringWithFormat:@"no icon PNG in %@ (tried %@)", path.lastPathComponent,
                             [names componentsJoinedByString:@", "]]);
