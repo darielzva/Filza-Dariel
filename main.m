@@ -972,6 +972,7 @@ static NSString *wq_temp_work_dir(NSString *prefix)
 {
     [super viewWillAppear:animated];
     [self updateToolbar];
+    [self updateHeader];   // picks up a change in Appearance
     if (_scanInFlight) return;
     NSTimeInterval age = NSDate.date.timeIntervalSinceReferenceDate - _lastReloadFinished;
     if (_scanNeedsRefresh || _lastReloadFinished <= 0 || age > 2.0) [self reload];
@@ -2917,6 +2918,7 @@ static NSString *const kSystemGroupRoot = @"/private/var/containers/Shared/Syste
 
 - (void)navigationController:(UINavigationController *)nav willShowViewController:(UIViewController *)vc animated:(BOOL)animated
 {
+    wq_style_view_controller(vc);   // Settings → Appearance: the gradient behind every list
     BOOL toolbar = [vc isKindOfClass:WQDirViewController.class] && [(WQDirViewController *)vc wq_wantsToolbar];
     [nav setToolbarHidden:!toolbar animated:animated];
     NSUInteger depth = [nav.viewControllers indexOfObject:vc];
