@@ -56,6 +56,9 @@ void wq_apply_appearance(UIWindow *_Nullable window);
 void wq_style_table(UITableView *table);
 // Glass background for a cell when glass is on.
 void wq_style_cell(UITableViewCell *cell);
+// Gradient behind the table of a list screen (called for every screen pushed in the navigation controller).
+// Cells get their glass background on their own when they appear.
+void wq_style_view_controller(UIViewController *vc);
 // A Settings-style icon: white symbol on a rounded colored square.
 UIImage *wq_badge_image(NSString *symbol, UIColor *color);
 UIImage *wq_telegram_icon(CGFloat side);
