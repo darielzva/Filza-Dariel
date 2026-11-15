@@ -3312,6 +3312,220 @@ static NSString *wq_language_name(NSString *code)
 
 @end
 
+#pragma mark - Settings and home screen layout
+
+static NSString *const kWQHiddenHomePref = @"WQHiddenHomeItems";
+
+static NSSet<NSString *> *wq_hidden_home_items(void)
+{
+    NSArray *ids = [NSUserDefaults.standardUserDefaults arrayForKey:kWQHiddenHomePref];
+    return [NSSet setWithArray:ids ?: @[]];
+}
+
+static BOOL wq_home_item_hidden(NSString *rid)
+{
+    return [wq_hidden_home_items() containsObject:rid];
+}
+
+static void wq_set_home_item_hidden(NSString *rid, BOOL hidden)
+{
+    NSMutableSet<NSString *> *ids = [wq_hidden_home_items() mutableCopy];
+    if (hidden) [ids addObject:rid]; else [ids removeObject:rid];
+    [NSUserDefaults.standardUserDefaults setObject:ids.allObjects forKey:kWQHiddenHomePref];
+}
+
+static NSDictionary *wq_home_item(NSString *rid, NSString *title, NSString *symbol, UIColor *color)
+{
+    return @{@"id": rid, @"title": title, @"symbol": symbol, @"color": color};
+}
+
+// Everything the start screen can show, by group (Settings → Home Screen).
+static NSArray<NSDictionary *> *wq_home_catalog(void)
+{
+    return @[
+        @{@"title": @"Tarjetas", @"items": @[
+            wq_home_item(@"appdata", @"App Data", @"square.grid.2x2.fill", UIColor.systemBlueColor),
+            wq_home_item(@"apps", @"Apps", @"app.fill", UIColor.systemGreenColor),
+            wq_home_item(@"patches", @"Patches", @"bandage.fill", UIColor.systemPurpleColor),
+            wq_home_item(@"cache", @"Cache Cleaner", @"sparkles", UIColor.systemOrangeColor)]},
+        @{@"title": @"Explore", @"items": @[
+            wq_home_item(@"groups", @"App Groups", @"square.stack.3d.up.fill", UIColor.systemIndigoColor),
+            wq_home_item(@"bundles", @"App Bundles", @"app.badge.fill", UIColor.systemTealColor),
+            wq_home_item(@"goto", @"Go to Path…", @"arrow.right.circle.fill", UIColor.systemGrayColor)]},
+        @{@"title": @"Backups", @"items": @[
+            wq_home_item(@"appbackups", @"App Backups", @"externaldrive.fill.badge.timemachine", UIColor.systemGreenColor),
+            wq_home_item(@"backups", @"Backups", @"clock.arrow.circlepath", UIColor.systemBlueColor),
+            wq_home_item(@"recent", @"Recently Deleted", @"trash.circle.fill", UIColor.systemRedColor)]},
+        @{@"title": @"Advanced", @"items": @[
+            wq_home_item(@"ext", @"Extension Data", @"puzzlepiece.extension.fill", UIColor.systemPurpleColor),
+            wq_home_item(@"daemons", @"Internal Daemons", @"gearshape.2.fill", UIColor.systemGrayColor),
+            wq_home_item(@"sysdata", @"System Data", @"cpu.fill", UIColor.systemGrayColor),
+            wq_home_item(@"sysgroups", @"System Groups", @"lock.square.stack.fill", UIColor.systemGrayColor),
+            wq_home_item(@"log", @"Log", @"doc.plaintext.fill", UIColor.systemOrangeColor)]},
+    ];
+}
+
+static UIImage *wq_settings_badge(NSString *symbol, UIColor *color)
+{
+    return wq_badge_image(symbol, wq_colored_icons() ? color : wq_accent_color());
+}
+
+// Choose what the start screen shows: every card and list entry has a switch.
+@interface WQHomeLayoutViewController : UITableViewController
+@end
+
+@implementation WQHomeLayoutViewController {
+    NSArray<NSDictionary *> *_catalog;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = @"Pantalla principal";
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    _catalog = wq_home_catalog();
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return (NSInteger)_catalog.count + 1; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return (NSUInteger)section < _catalog.count ? (NSInteger)[_catalog[(NSUInteger)section][@"items"] count] : 1;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
+{
+    return (NSUInteger)section < _catalog.count ? WQLocalized(_catalog[(NSUInteger)section][@"title"]) : nil;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
+{
+    if ((NSUInteger)section == _catalog.count - 1)
+        return @"Lo que ocultes deja de verse en la pantalla principal. Las carpetas avanzadas solo aparecen si «Mostrar carpetas avanzadas» está activado en Ajustes.";
+    return nil;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    UIListContentConfiguration *c = cell.defaultContentConfiguration;
+    if ((NSUInteger)indexPath.section >= _catalog.count) {
+        c.text = @"Mostrar todo";
+        c.textProperties.color = cell.tintColor;
+        cell.contentConfiguration = c;
+        return cell;
+    }
+    NSDictionary *item = _catalog[(NSUInteger)indexPath.section][@"items"][(NSUInteger)indexPath.row];
+    NSString *rid = item[@"id"];
+    c.text = WQLocalized(item[@"title"]);
+    c.image = wq_settings_badge(item[@"symbol"], item[@"color"]);
+    c.imageProperties.reservedLayoutSize = CGSizeMake(30, 30);
+    c.imageToTextPadding = 12;
+    cell.contentConfiguration = c;
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    UISwitch *toggle = [UISwitch new];
+    toggle.on = !wq_home_item_hidden(rid);
+    [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
+        wq_set_home_item_hidden(rid, !((UISwitch *)action.sender).on);
+    }] forControlEvents:UIControlEventValueChanged];
+    cell.accessoryView = toggle;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if ((NSUInteger)indexPath.section < _catalog.count) return;
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:kWQHiddenHomePref];
+    [tableView reloadData];
+}
+
+@end
+
+// The settings that used to sit at the bottom of the start screen.
+@interface WQSettingsViewController : UITableViewController
+@end
+
+@implementation WQSettingsViewController {
+    NSArray<NSArray<NSDictionary *> *> *_sections;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.title = WQLocalized(@"Settings");
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    _sections = @[
+        @[wq_home_item(@"s_delete", @"Allow Deleting", @"trash.slash.fill", UIColor.systemRedColor),
+          wq_home_item(@"s_counts", @"Show Item Counts", @"number.square.fill", UIColor.systemBlueColor),
+          wq_home_item(@"s_keep", @"Keep Data Before Restore", @"arrow.uturn.backward.circle.fill", UIColor.systemGreenColor),
+          wq_home_item(@"s_advanced", @"Show Advanced Folders", @"wrench.and.screwdriver.fill", UIColor.systemGrayColor)],
+        @[wq_home_item(@"appearance", @"Appearance", @"paintpalette.fill", UIColor.systemPinkColor),
+          wq_home_item(@"homelayout", @"Pantalla principal", @"rectangle.grid.2x2.fill", UIColor.systemIndigoColor),
+          wq_home_item(@"language", @"Language", @"globe", UIColor.systemBlueColor),
+          wq_home_item(@"about", @"About", @"info.circle.fill", UIColor.systemGrayColor)],
+    ];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return (NSInteger)_sections.count; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return (NSInteger)_sections[(NSUInteger)section].count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    NSDictionary *row = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
+    NSString *rid = row[@"id"];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    UIListContentConfiguration *c = [rid isEqualToString:@"language"] ? [UIListContentConfiguration valueCellConfiguration]
+                                                                    : cell.defaultContentConfiguration;
+    c.text = WQLocalized(row[@"title"]);
+    c.image = wq_settings_badge(row[@"symbol"], row[@"color"]);
+    c.imageProperties.reservedLayoutSize = CGSizeMake(30, 30);
+    c.imageToTextPadding = 12;
+    if ([rid isEqualToString:@"language"]) c.secondaryText = wq_language_name(wq_chosen_language());
+    cell.contentConfiguration = c;
+    if ([rid hasPrefix:@"s_"]) {
+        UISwitch *toggle = [UISwitch new];
+        toggle.on = [rid isEqualToString:@"s_counts"] ? wq_show_item_counts()
+                  : [rid isEqualToString:@"s_keep"] ? wq_keep_before_restore()
+                  : [rid isEqualToString:@"s_advanced"] ? wq_show_advanced()
+                  : wq_deleting_allowed();
+        [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
+            BOOL on = ((UISwitch *)action.sender).on;
+            if ([rid isEqualToString:@"s_counts"]) [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQShowItemCountsPref];
+            else if ([rid isEqualToString:@"s_keep"]) wq_set_keep_before_restore(on);
+            else if ([rid isEqualToString:@"s_advanced"]) [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQShowAdvancedPref];
+            else wq_set_deleting_allowed(on);
+        }] forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = toggle;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    } else {
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    }
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSString *rid = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row][@"id"];
+    UIViewController *next = nil;
+    if ([rid isEqualToString:@"appearance"]) next = [WQAppearanceViewController new];
+    else if ([rid isEqualToString:@"homelayout"]) next = [WQHomeLayoutViewController new];
+    else if ([rid isEqualToString:@"language"]) next = [WQLanguageViewController new];
+    else if ([rid isEqualToString:@"about"]) next = [WQAboutViewController new];
+    if (next) [self.navigationController pushViewController:next animated:YES];
+}
+
+@end
+
 @implementation WQRootViewController {
     NSArray<NSDictionary *> *_sections;   // title, footer, rows (id, title, symbol, color)
     // Kept between visits so Apps and the Cache Cleaner show their last list
@@ -3366,12 +3580,8 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         wq_row(@"recent", @"Recently Deleted", @"trash.circle.fill", UIColor.systemRedColor),
     ];
 
-    NSMutableArray<NSDictionary *> *sections = [NSMutableArray new];
-    [sections addObject:@{@"title": @"Explore", @"rows": explore}];
-    [sections addObject:@{@"title": @"Backups", @"rows": backups}];
-
+    NSMutableArray *advanced = [NSMutableArray new];
     if (wq_show_advanced()) {
-        NSMutableArray *advanced = [NSMutableArray new];
         [advanced addObject:wq_row(@"ext", @"Extension Data", @"puzzlepiece.extension.fill", UIColor.systemPurpleColor)];
         [advanced addObject:wq_row(@"daemons", @"Internal Daemons", @"gearshape.2.fill", UIColor.systemGrayColor)];
         if (wq_system_areas_reachable()) {
@@ -3379,19 +3589,17 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
             [advanced addObject:wq_row(@"sysgroups", @"System Groups", @"lock.square.stack.fill", UIColor.systemGrayColor)];
         }
         [advanced addObject:wq_row(@"log", @"Log", @"doc.plaintext.fill", UIColor.systemOrangeColor)];
-        [sections addObject:@{@"title": @"Advanced", @"rows": advanced}];
     }
 
-    NSArray *settings = @[
-        wq_row(@"s_delete", @"Allow Deleting", @"trash.slash.fill", UIColor.systemRedColor),
-        wq_row(@"s_counts", @"Show Item Counts", @"number.square.fill", UIColor.systemBlueColor),
-        wq_row(@"s_keep", @"Keep Data Before Restore", @"arrow.uturn.backward.circle.fill", UIColor.systemGreenColor),
-        wq_row(@"s_advanced", @"Show Advanced Folders", @"wrench.and.screwdriver.fill", UIColor.systemGrayColor),
-        wq_row(@"appearance", @"Appearance", @"paintpalette.fill", UIColor.systemPinkColor),
-        wq_row(@"language", @"Language", @"globe", UIColor.systemBlueColor),
-        wq_row(@"about", @"About", @"info.circle.fill", UIColor.systemGrayColor),
-    ];
-    [sections addObject:@{@"title": @"Settings", @"rows": settings}];
+    // The settings are behind the gear in the hero card; Settings → Home Screen
+    // hides what you don't use here.
+    NSMutableArray<NSDictionary *> *sections = [NSMutableArray new];
+    for (NSArray *group in @[@[@"Explore", explore], @[@"Backups", backups], @[@"Advanced", advanced]]) {
+        NSMutableArray *visible = [NSMutableArray new];
+        for (NSDictionary *row in group[1])
+            if (!wq_home_item_hidden(row[@"id"])) [visible addObject:row];
+        if (visible.count) [sections addObject:@{@"title": group[0], @"rows": visible}];
+    }
     _sections = sections;
 }
 
@@ -3411,13 +3619,14 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     return nil;
 }
 
-// The start screen's top: a hero card in the accent color and a 2x2 grid of
-// cards for what is used most (solid, or translucent glass).
+// The start screen's top: a hero card in the accent color (with the gear for
+// Settings) and a grid of cards for what is used most. Settings → Home Screen
+// hides cards, and the grid shrinks to what is left.
 - (UIView *)homeHeader
 {
     BOOL glass = wq_glass_enabled();
     __weak typeof(self) weakSelf = self;
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 426)];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 400)];
 
     // ---- Hero ----
     WQGradientCardView *hero = [WQGradientCardView new];
@@ -3477,6 +3686,23 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     telegram.translatesAutoresizingMaskIntoConstraints = NO;
     [hero addSubview:telegram];
 
+    // Gear, top right: opens Settings.
+    UIButtonConfiguration *gearConfig = [UIButtonConfiguration plainButtonConfiguration];
+    gearConfig.image = [UIImage systemImageNamed:@"gearshape.fill"
+                               withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold]];
+    gearConfig.baseForegroundColor = UIColor.whiteColor;
+    gearConfig.contentInsets = NSDirectionalEdgeInsetsMake(9, 9, 9, 9);
+    UIBackgroundConfiguration *gearBackground = [UIBackgroundConfiguration clearConfiguration];
+    gearBackground.backgroundColor = [UIColor.whiteColor colorWithAlphaComponent:0.22];
+    gearBackground.cornerRadius = 18;
+    gearConfig.background = gearBackground;
+    UIButton *gear = [UIButton buttonWithConfiguration:gearConfig primaryAction:[UIAction actionWithHandler:^(UIAction *__unused a) {
+        [weakSelf openRow:@"settings"];
+    }]];
+    gear.accessibilityLabel = WQLocalized(@"Settings");
+    gear.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:gear];
+
     [NSLayoutConstraint activateConstraints:@[
         [decor.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:28],
         [decor.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:34],
@@ -3490,21 +3716,36 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         [telegram.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:18],
         [telegram.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-18],
         [telegram.heightAnchor constraintEqualToConstant:32],
+        [gear.topAnchor constraintEqualToAnchor:hero.topAnchor constant:16],
+        [gear.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-16],
+        [gear.widthAnchor constraintEqualToConstant:36],
+        [gear.heightAnchor constraintEqualToConstant:36],
     ]];
     [header addSubview:hero];
 
-    // ---- 2x2 cards ----
-    NSArray *tiles = @[
+    NSMutableArray<NSLayoutConstraint *> *constraints = [@[
+        [hero.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
+        [hero.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
+        [hero.topAnchor constraintEqualToAnchor:header.topAnchor constant:6],
+        [hero.heightAnchor constraintEqualToConstant:176],
+    ] mutableCopy];
+    CGFloat height = 6 + 176 + 10;
+
+    // ---- Cards (two per row; hidden ones are left out) ----
+    NSArray *allTiles = @[
         @[@"appdata", @"App Data", @"square.grid.2x2.fill", UIColor.systemBlueColor],
         @[@"apps", @"Apps", @"app.fill", UIColor.systemGreenColor],
         @[@"patches", @"Patches", @"bandage.fill", UIColor.systemPurpleColor],
         @[@"cache", @"Cache Cleaner", @"sparkles", UIColor.systemOrangeColor],
     ];
-    NSMutableArray<UIStackView *> *rows = [NSMutableArray new];
-    for (NSUInteger row = 0; row < 2; row++) {
-        NSMutableArray<UIButton *> *buttons = [NSMutableArray new];
-        for (NSUInteger column = 0; column < 2; column++) {
-            NSArray *tile = tiles[row * 2 + column];
+    NSMutableArray<NSArray *> *tiles = [NSMutableArray new];
+    for (NSArray *tile in allTiles)
+        if (!wq_home_item_hidden(tile[0])) [tiles addObject:tile];
+    NSMutableArray<UIStackView *> *lines = [NSMutableArray new];
+    for (NSUInteger start = 0; start < tiles.count; start += 2) {
+        NSMutableArray<UIView *> *cells = [NSMutableArray new];
+        for (NSUInteger index = start; index < MIN(start + 2, tiles.count); index++) {
+            NSArray *tile = tiles[index];
             NSString *rid = tile[0];
             UIColor *color = wq_colored_icons() ? tile[3] : accent;
             UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
@@ -3533,29 +3774,30 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
             button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
             button.accessibilityLabel = WQLocalized(tile[1]);
             [button.heightAnchor constraintEqualToConstant:104].active = YES;
-            [buttons addObject:button];
+            [cells addObject:button];
         }
-        UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:buttons];
+        if (cells.count == 1) [cells addObject:[UIView new]];   // an odd card keeps its half width
+        UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:cells];
         line.axis = UILayoutConstraintAxisHorizontal;
         line.distribution = UIStackViewDistributionFillEqually;
         line.spacing = 12;
-        [rows addObject:line];
+        [lines addObject:line];
     }
-    UIStackView *grid = [[UIStackView alloc] initWithArrangedSubviews:rows];
-    grid.axis = UILayoutConstraintAxisVertical;
-    grid.spacing = 12;
-    grid.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addSubview:grid];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [hero.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
-        [hero.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
-        [hero.topAnchor constraintEqualToAnchor:header.topAnchor constant:6],
-        [hero.heightAnchor constraintEqualToConstant:176],
-        [grid.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
-        [grid.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
-        [grid.topAnchor constraintEqualToAnchor:hero.bottomAnchor constant:14],
-    ]];
+    if (lines.count) {
+        UIStackView *grid = [[UIStackView alloc] initWithArrangedSubviews:lines];
+        grid.axis = UILayoutConstraintAxisVertical;
+        grid.spacing = 12;
+        grid.translatesAutoresizingMaskIntoConstraints = NO;
+        [header addSubview:grid];
+        [constraints addObjectsFromArray:@[
+            [grid.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:16],
+            [grid.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
+            [grid.topAnchor constraintEqualToAnchor:hero.bottomAnchor constant:14],
+        ]];
+        height += 14 + (CGFloat)lines.count * 104 + (CGFloat)(lines.count - 1) * 12;
+    }
+    [NSLayoutConstraint activateConstraints:constraints];
+    header.frame = CGRectMake(0, 0, 320, height);
     return header;
 }
 
@@ -3781,6 +4023,8 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
         next = [WQSystemGroupsViewController new];
     } else if ([rid isEqualToString:@"language"]) {
         next = [WQLanguageViewController new];
+    } else if ([rid isEqualToString:@"settings"]) {
+        next = [WQSettingsViewController new];
     } else if ([rid isEqualToString:@"patches"]) {
         next = [WQPatchesViewController new];
     } else if ([rid isEqualToString:@"appearance"]) {
