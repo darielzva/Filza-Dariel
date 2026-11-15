@@ -689,6 +689,19 @@ static void wq_style_cell_auto(UITableViewCell *cell)
     wq_style_cell(cell);
 }
 
+// Adds an override of UIView's didMoveToWindow to just this class, then swaps in
+// ours (so only cells / tables change, not every view).
+static void wq_swizzle_did_move_to_window(Class cls)
+{
+    SEL originalSelector = @selector(didMoveToWindow), swizzledSelector = @selector(wq_didMoveToWindow);
+    Method original = class_getInstanceMethod(cls, originalSelector);
+    Method swizzled = class_getInstanceMethod(cls, swizzledSelector);
+    if (class_addMethod(cls, originalSelector, method_getImplementation(swizzled), method_getTypeEncoding(swizzled)))
+        class_replaceMethod(cls, swizzledSelector, method_getImplementation(original), method_getTypeEncoding(original));
+    else
+        method_exchangeImplementations(original, swizzled);
+}
+
 @interface UITableViewCell (WQGlass)
 @end
 
@@ -697,23 +710,37 @@ static void wq_style_cell_auto(UITableViewCell *cell)
 + (void)load
 {
     static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        Class cls = UITableViewCell.class;
-        SEL originalSelector = @selector(didMoveToWindow), swizzledSelector = @selector(wq_didMoveToWindow);
-        Method original = class_getInstanceMethod(cls, originalSelector);
-        Method swizzled = class_getInstanceMethod(cls, swizzledSelector);
-        // didMoveToWindow belongs to UIView: add it to the cell class first so only cells change.
-        if (class_addMethod(cls, originalSelector, method_getImplementation(swizzled), method_getTypeEncoding(swizzled)))
-            class_replaceMethod(cls, swizzledSelector, method_getImplementation(original), method_getTypeEncoding(original));
-        else
-            method_exchangeImplementations(original, swizzled);
-    });
+    dispatch_once(&once, ^{ wq_swizzle_did_move_to_window(UITableViewCell.class); });
 }
 
 - (void)wq_didMoveToWindow
 {
     [self wq_didMoveToWindow];   // the original implementation
     if (self.window) wq_style_cell_auto(self);
+}
+
+@end
+
+// The gradient too: every table of the app takes it when it appears, whatever
+// screen it belongs to (a table with a background of its own is left alone).
+@interface UITableView (WQGlass)
+@end
+
+@implementation UITableView (WQGlass)
+
++ (void)load
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ wq_swizzle_did_move_to_window(UITableView.class); });
+}
+
+- (void)wq_didMoveToWindow
+{
+    [self wq_didMoveToWindow];   // the original implementation
+    if (!self.window) return;
+    UIView *current = self.backgroundView;
+    if (current && ![current isKindOfClass:WQGradientView.class]) return;
+    wq_style_table(self);
 }
 
 @end
