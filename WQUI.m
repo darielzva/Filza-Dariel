@@ -6,6 +6,7 @@
 
 #import "WQUI.h"
 #import "WQAccess.h"
+#import "WQPatchCrypto.h"
 #import "WQArchive.h"
 #import "WQApps.h"
 #import "WQDir.h"
@@ -962,7 +963,6 @@ UIImage *wq_telegram_icon(CGFloat side)
             @{@"text": WQLocalized(@"On iOS 26, System Data and System Groups can't be reached (worse_query covers them on iOS 27 only), and Internal Daemons need a scan of every file id: the first one can take most of an hour on a well-used device, later ones only check new files.")},
         ]},
         @{@"title": WQLocalized(@"Credits"), @"rows": @[
-            @{@"title": @"DM FILES", @"detail": @"@didierxit7", @"url": @"https://t.me/didierxit7", @"telegram": @YES},
             @{@"title": @"WQ Files", @"detail": @"kolbicz", @"url": @"https://github.com/kolbicz/WQFiles"},
             @{@"title": @"worse_query", @"detail": @"@forcequitOS", @"url": @"https://github.com/forcequitOS/worse_query"},
             @{@"title": @"3105 (.3105)", @"detail": @"YangJiii", @"url": @"https://github.com/YangJiiii/3105"},
@@ -2140,57 +2140,84 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
 
 - (void)handleImportDMAtURL:(NSURL *)url
 {
-    // .dm is a ZIP. Extract into a temp folder, validate, then move into Patches/.
-    NSString *tmpDir = [NSTemporaryDirectory()
-                        stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    NSFileManager *fm = NSFileManager.defaultManager;
-    [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-    NSString *zipPath = url.path;
-    NSString *extractError = nil;
-    NSUInteger filesExtracted = 0, skipped = 0;
-    BOOL ok = wq_zip_extract(zipPath, tmpDir, wq_archive_posix_io(),
-                             512ULL * 1024 * 1024,   // 512 MB limit
-                             nil, nil,
-                             &filesExtracted, &skipped, &extractError);
-    if (!ok) {
-        [fm removeItemAtPath:tmpDir error:nil];
-        wq_alert(self, @"Importar parche", extractError ?: @"El archivo .dm no se pudo descomprimir.");
+    NSError *readErr = nil;
+    NSData *fileData = [NSData dataWithContentsOfURL:url
+                                             options:NSDataReadingMappedIfSafe
+                                               error:&readErr];
+    if (!fileData) {
+        wq_alert(self, @"Importar parche",
+                 readErr.localizedDescription ?: @"No se pudo leer el archivo .dm.");
         return;
     }
+    [self handleImportDMData:fileData password:nil];
+}
 
-    // The archive may put everything under a single top-level folder, or directly.
-    // Find the folder that contains patch.json.
-    NSString *patchFolder = [self findPatchFolderIn:tmpDir];
-    if (!patchFolder) {
-        [fm removeItemAtPath:tmpDir error:nil];
-        wq_alert(self, @"Parche inválido", @"El archivo .dm no contiene patch.json.");
+- (void)handleImportDMData:(NSData *)fileData password:(NSString *_Nullable)password
+{
+    NSString *patchFolder = nil;
+    BOOL needsPassword = NO;
+    NSString *cryptoError = wq_dm_read(fileData, password, &patchFolder, &needsPassword);
+
+    if (cryptoError) {
+        if (needsPassword) {
+            [self askDMPasswordForData:fileData wrongPassword:password.length > 0];
+        } else {
+            wq_alert(self, @"Parche .dm inválido", cryptoError);
+        }
         return;
     }
 
     NSString *validationError = nil;
     if (!wq_patch_read(patchFolder, &validationError)) {
-        [fm removeItemAtPath:tmpDir error:nil];
-        wq_alert(self, @"Parche inválido", validationError ?: @"patch.json no es válido.");
+        [[NSFileManager defaultManager]
+         removeItemAtPath:patchFolder.stringByDeletingLastPathComponent error:nil];
+        wq_alert(self, @"Parche .dm inválido", validationError ?: @"patch.json no es válido.");
         return;
     }
 
-    // Move the validated folder into Patches/.
-    NSString *dir = wq_patches_root();
+    NSFileManager *fm  = NSFileManager.defaultManager;
+    NSString *dir      = wq_patches_root();
     NSString *destName = patchFolder.lastPathComponent;
-    NSString *dest = [dir stringByAppendingPathComponent:destName];
+    NSString *dest     = [dir stringByAppendingPathComponent:destName];
     for (NSUInteger n = 2; [fm fileExistsAtPath:dest]; n++) {
         destName = [NSString stringWithFormat:@"%@ %lu", patchFolder.lastPathComponent, (unsigned long)n];
         dest = [dir stringByAppendingPathComponent:destName];
     }
     NSError *moveError = nil;
+    NSString *tmpRoot = patchFolder.stringByDeletingLastPathComponent;
     if (![fm moveItemAtPath:patchFolder toPath:dest error:&moveError]) {
-        [fm removeItemAtPath:tmpDir error:nil];
+        [fm removeItemAtPath:tmpRoot error:nil];
         wq_alert(self, @"Error al importar", moveError.localizedDescription);
         return;
     }
-    [fm removeItemAtPath:tmpDir error:nil];
+    [fm removeItemAtPath:tmpRoot error:nil];
     [self reload];
+}
+
+- (void)askDMPasswordForData:(NSData *)fileData wrongPassword:(BOOL)wrong
+{
+    NSString *title   = wrong ? @"Contraseña incorrecta" : @"Parche protegido";
+    NSString *message = wrong ? @"Vuelve a intentarlo." : @"Este parche requiere una contraseña.";
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:title
+                                            message:message
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder        = @"Contraseña";
+        tf.secureTextEntry    = YES;
+        tf.returnKeyType      = UIReturnKeyDone;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Importar"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *__unused a) {
+        NSString *pw = alert.textFields.firstObject.text ?: @"";
+        [weakSelf handleImportDMData:fileData password:pw];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
+                                             style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 // Returns the path that directly contains patch.json, searching one level deep.
@@ -2347,39 +2374,95 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 
 - (void)exportPatch:(NSDictionary *)patch fromCell:(UIView *_Nullable)sourceView
 {
-    NSString *folder = patch[@"folder"];
-    NSString *patchName = patch[@"name"] ?: folder.lastPathComponent;
-
-    // Sanitize the filename.
-    NSString *safeName = [patchName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
-    NSString *zipPath = [NSTemporaryDirectory()
-                         stringByAppendingPathComponent:[safeName stringByAppendingPathExtension:@"dm"]];
-    [[NSFileManager defaultManager] removeItemAtPath:zipPath error:nil];
-
-    UIAlertController *busy =
-        wq_alert_controller(@"Exportando…", nil, UIAlertControllerStyleAlert);
-    [self presentViewController:busy animated:YES completion:nil];
+    // Ask whether to protect with a password first, then export.
+    UIAlertController *ask =
+        [UIAlertController alertControllerWithTitle:@"Exportar parche (.dm)"
+                                            message:@"¿Proteger con contraseña?"
+                                     preferredStyle:UIAlertControllerStyleAlert];
 
     __weak typeof(self) weakSelf = self;
-    dispatch_async(wq_io(), ^{
-        NSString *errorText = nil;
-        BOOL ok = wq_zip_write(@[folder], zipPath, wq_archive_posix_io(),
-                               nil, nil, nil, &errorText);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [busy dismissViewControllerAnimated:YES completion:^{
-                if (!ok || ![[NSFileManager defaultManager] fileExistsAtPath:zipPath]) {
-                    wq_alert(weakSelf, @"Error al exportar", errorText ?: @"No se pudo crear el .dm.");
-                    return;
-                }
-                NSURL *dmURL = [NSURL fileURLWithPath:zipPath];
-                UIActivityViewController *share =
-                    [[UIActivityViewController alloc] initWithActivityItems:@[dmURL]
-                                                     applicationActivities:nil];
-                share.popoverPresentationController.sourceView = sourceView ?: weakSelf.view;
-                [weakSelf presentViewController:share animated:YES completion:nil];
-            }];
+    void (^doExport)(NSString *_Nullable) = ^(NSString *_Nullable password) {
+        NSString *folder    = patch[@"folder"];
+        NSString *patchName = patch[@"name"] ?: folder.lastPathComponent;
+        NSString *safeName  = [patchName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+        NSString *destPath  = [NSTemporaryDirectory()
+                               stringByAppendingPathComponent:[safeName stringByAppendingPathExtension:@"dm"]];
+        [[NSFileManager defaultManager] removeItemAtPath:destPath error:nil];
+
+        UIAlertController *busy =
+            wq_alert_controller(@"Exportando…", nil, UIAlertControllerStyleAlert);
+        [weakSelf presentViewController:busy animated:YES completion:nil];
+
+        dispatch_async(wq_io(), ^{
+            NSString *errorText = wq_dm_write(folder, destPath, password);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [busy dismissViewControllerAnimated:YES completion:^{
+                    if (errorText || ![[NSFileManager defaultManager] fileExistsAtPath:destPath]) {
+                        wq_alert(weakSelf, @"Error al exportar", errorText ?: @"No se pudo crear el .dm.");
+                        return;
+                    }
+                    NSURL *dmURL = [NSURL fileURLWithPath:destPath];
+                    UIActivityViewController *share =
+                        [[UIActivityViewController alloc] initWithActivityItems:@[dmURL]
+                                                         applicationActivities:nil];
+                    share.popoverPresentationController.sourceView = sourceView ?: weakSelf.view;
+                    [weakSelf presentViewController:share animated:YES completion:nil];
+                }];
+            });
         });
-    });
+    };
+
+    // "Sin contraseña" — export immediately without password.
+    [ask addAction:[UIAlertAction actionWithTitle:@"Sin contraseña"
+                                           style:UIAlertActionStyleDefault
+                                         handler:^(UIAlertAction *__unused a) {
+        doExport(nil);
+    }]];
+
+    // "Con contraseña" — ask for the password, then export.
+    [ask addAction:[UIAlertAction actionWithTitle:@"Con contraseña…"
+                                           style:UIAlertActionStyleDefault
+                                         handler:^(UIAlertAction *__unused a) {
+        UIAlertController *pwAlert =
+            [UIAlertController alertControllerWithTitle:@"Contraseña del parche"
+                                                message:@"El que importe el parche la necesitará."
+                                         preferredStyle:UIAlertControllerStyleAlert];
+        [pwAlert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.placeholder       = @"Contraseña";
+            tf.secureTextEntry   = YES;
+            tf.returnKeyType     = UIReturnKeyDone;
+            tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        }];
+        [pwAlert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+            tf.placeholder       = @"Confirmar contraseña";
+            tf.secureTextEntry   = YES;
+            tf.returnKeyType     = UIReturnKeyDone;
+            tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        }];
+        [pwAlert addAction:[UIAlertAction actionWithTitle:@"Exportar"
+                                                   style:UIAlertActionStyleDefault
+                                                 handler:^(UIAlertAction *__unused b) {
+            NSString *pw1 = pwAlert.textFields[0].text ?: @"";
+            NSString *pw2 = pwAlert.textFields[1].text ?: @"";
+            if (!pw1.length) {
+                wq_alert(weakSelf, @"Contraseña vacía", @"Escribe una contraseña o elige Sin contraseña.");
+                return;
+            }
+            if (![pw1 isEqualToString:pw2]) {
+                wq_alert(weakSelf, @"Las contraseñas no coinciden", @"Vuelve a intentarlo.");
+                return;
+            }
+            doExport(pw1);
+        }]];
+        [pwAlert addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
+                                                   style:UIAlertActionStyleCancel handler:nil]];
+        [weakSelf presentViewController:pwAlert animated:YES completion:nil];
+    }]];
+
+    [ask addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
+                                           style:UIAlertActionStyleCancel handler:nil]];
+    ask.popoverPresentationController.sourceView = sourceView ?: self.view;
+    [self presentViewController:ask animated:YES completion:nil];
 }
 
 // ---- UITableViewDataSource / Delegate ----------------------------------
