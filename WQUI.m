@@ -6,18 +6,148 @@
 
 #import "WQUI.h"
 #import "WQAccess.h"
-#import "WQPatchCrypto.h"
 #import "WQArchive.h"
 #import "WQApps.h"
 #import "WQDir.h"
 #import "WQLaunchServices.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <objc/runtime.h>
 #import <CommonCrypto/CommonCrypto.h>
+#import <Security/Security.h>
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <sys/sysctl.h>
 #import <sys/utsname.h>
+
+// ---- AES-256-GCM primitives (used by both .3105 import and .dm format) ----
+
+static const uint64_t wq_last4[16] = {
+    0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
+    0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0
+};
+
+typedef struct { uint64_t hl[16], hh[16]; } wq_ghash_t;
+
+static void wq_ghash_init(wq_ghash_t *g, const uint8_t h[16])
+{
+    uint64_t vh = 0, vl = 0;
+    for (int i = 0; i < 8; i++) { vh = (vh << 8) | h[i]; vl = (vl << 8) | h[8 + i]; }
+    g->hl[0] = 0; g->hh[0] = 0;
+    g->hl[8] = vl; g->hh[8] = vh;
+    for (int i = 4; i > 0; i >>= 1) {
+        uint32_t t = (uint32_t)(vl & 1) * 0xe1000000U;
+        vl = (vh << 63) | (vl >> 1);
+        vh = (vh >> 1) ^ ((uint64_t)t << 32);
+        g->hl[i] = vl; g->hh[i] = vh;
+    }
+    for (int i = 2; i < 16; i <<= 1) {
+        uint64_t *hil = g->hl + i, *hih = g->hh + i;
+        vh = *hih; vl = *hil;
+        for (int j = 1; j < i; j++) { hih[j] = vh ^ g->hh[j]; hil[j] = vl ^ g->hl[j]; }
+    }
+}
+
+static void wq_ghash_mult(const wq_ghash_t *g, uint8_t x[16])
+{
+    uint8_t lo = x[15] & 0xf;
+    uint64_t zh = g->hh[lo], zl = g->hl[lo];
+    for (int i = 15; i >= 0; i--) {
+        lo = x[i] & 0xf;
+        uint8_t hi = (x[i] >> 4) & 0xf;
+        uint8_t rem;
+        if (i != 15) {
+            rem = (uint8_t)(zl & 0xf);
+            zl = (zh << 60) | (zl >> 4);
+            zh = zh >> 4;
+            zh ^= wq_last4[rem] << 48;
+            zh ^= g->hh[lo];
+            zl ^= g->hl[lo];
+        }
+        rem = (uint8_t)(zl & 0xf);
+        zl = (zh << 60) | (zl >> 4);
+        zh = zh >> 4;
+        zh ^= wq_last4[rem] << 48;
+        zh ^= g->hh[hi];
+        zl ^= g->hl[hi];
+    }
+    for (int i = 0; i < 8; i++) { x[i] = (uint8_t)(zh >> (56 - 8 * i)); x[8 + i] = (uint8_t)(zl >> (56 - 8 * i)); }
+}
+
+static void wq_ghash_update(const wq_ghash_t *g, uint8_t y[16], const uint8_t *data, size_t len)
+{
+    while (len) {
+        size_t n = len < 16 ? len : 16;
+        for (size_t i = 0; i < n; i++) y[i] ^= data[i];
+        wq_ghash_mult(g, y);
+        data += n; len -= n;
+    }
+}
+
+static BOOL wq_aes_ecb(NSData *key, const uint8_t *in, size_t length, uint8_t *out)
+{
+    size_t moved = 0;
+    CCCryptorStatus status = CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionECBMode,
+                                     key.bytes, key.length, NULL,
+                                     in, length, out, length, &moved);
+    return status == kCCSuccess && moved == length;
+}
+
+// AES-256-GCM open (decrypt + verify tag). Returns nil when tag doesn't match.
+static NSData *wq_gcm_open(NSData *key, NSData *nonce, NSData *aad,
+                            NSData *ciphertext, NSData *tag)
+{
+    if (key.length != 32 || nonce.length != 12 || tag.length != 16) return nil;
+    uint8_t zero[16] = {0}, h[16];
+    if (!wq_aes_ecb(key, zero, 16, h)) return nil;
+    wq_ghash_t ghash;
+    wq_ghash_init(&ghash, h);
+    uint8_t y[16] = {0};
+    wq_ghash_update(&ghash, y, aad.bytes, aad.length);
+    wq_ghash_update(&ghash, y, ciphertext.bytes, ciphertext.length);
+    uint8_t lengths[16];
+    uint64_t aadBits = (uint64_t)aad.length * 8, textBits = (uint64_t)ciphertext.length * 8;
+    for (int i = 0; i < 8; i++) {
+        lengths[i]     = (uint8_t)(aadBits  >> (56 - 8 * i));
+        lengths[8 + i] = (uint8_t)(textBits >> (56 - 8 * i));
+    }
+    wq_ghash_update(&ghash, y, lengths, 16);
+    uint8_t j0[16] = {0}, ej0[16];
+    memcpy(j0, nonce.bytes, 12);
+    j0[15] = 1;
+    if (!wq_aes_ecb(key, j0, 16, ej0)) return nil;
+    uint8_t diff = 0;
+    const uint8_t *tagBytes = tag.bytes;
+    for (int i = 0; i < 16; i++) diff |= (uint8_t)(y[i] ^ ej0[i] ^ tagBytes[i]);
+    if (diff) return nil;
+
+    NSMutableData *plain = [NSMutableData dataWithLength:ciphertext.length];
+    const size_t chunkBlocks = 65536;
+    uint8_t *counters = malloc(chunkBlocks * 16), *stream = malloc(chunkBlocks * 16);
+    if (!counters || !stream) { free(counters); free(stream); return nil; }
+    const uint8_t *source = ciphertext.bytes;
+    uint8_t *target = plain.mutableBytes;
+    uint32_t counter = 2;
+    size_t done = 0;
+    BOOL ok = YES;
+    while (done < ciphertext.length) {
+        size_t remaining = ciphertext.length - done;
+        size_t blocks = MIN(chunkBlocks, (remaining + 15) / 16);
+        for (size_t b = 0; b < blocks; b++) {
+            memcpy(counters + b * 16, nonce.bytes, 12);
+            uint32_t c = counter++;
+            counters[b * 16 + 12] = (uint8_t)(c >> 24);
+            counters[b * 16 + 13] = (uint8_t)(c >> 16);
+            counters[b * 16 + 14] = (uint8_t)(c >> 8);
+            counters[b * 16 + 15] = (uint8_t)c;
+        }
+        if (!wq_aes_ecb(key, counters, blocks * 16, stream)) { ok = NO; break; }
+        size_t n = MIN(remaining, blocks * 16);
+        for (size_t i = 0; i < n; i++) target[done + i] = source[done + i] ^ stream[i];
+        done += n;
+    }
+    free(counters); free(stream);
+    return ok ? plain : nil;
+}
+// ---- end GCM primitives ----
 
 // "iPhone 17 Pro Max (iPhone18,2)\niOS 27.0.1 (24A446)"
 NSString *wq_device_line(void)
@@ -106,7 +236,7 @@ static void wq_icon_note(NSString *bundleID, NSString *what)
 {
     static NSUInteger notes;
     @synchronized (NSNull.null) {
-        if (notes >= 30) return;
+        if (notes >= 8) return;
         notes++;
     }
     wq_log(@"icon: %@: %@", bundleID, what);
@@ -148,37 +278,6 @@ static UIImage *wq_bundle_icon(NSString *bundleID)
                 return image;
             }
         }
-    }
-    // Not under the usual names: take the largest square icon-like PNG that
-    // sits in the app bundle (games often name theirs differently).
-    NSFileManager *fm = NSFileManager.defaultManager;
-    UIImage *best = nil;
-    NSString *bestName = nil;
-    CGFloat bestPixels = 0;
-    for (NSString *file in [fm contentsOfDirectoryAtPath:path error:nil]) {
-        NSString *lower = file.lowercaseString;
-        if (![lower hasSuffix:@".png"] || ![lower containsString:@"icon"]) continue;
-        if ([lower containsString:@"launch"] || [lower containsString:@"splash"] || [lower containsString:@"notification"]) continue;
-        UIImage *image = [UIImage imageWithContentsOfFile:[path stringByAppendingPathComponent:file]];
-        if (!image.CGImage || fabs(image.size.width - image.size.height) > 1) continue;
-        CGFloat pixels = image.size.width * image.scale;
-        if (pixels > bestPixels) { best = image; bestPixels = pixels; bestName = file; }
-    }
-    if (best) {
-        wq_icon_note(bundleID, [NSString stringWithFormat:@"loaded %@ from the app (searched the bundle)", bestName]);
-        return best;
-    }
-    // App Store apps keep their artwork next to the .app, in the bundle container.
-    NSString *container = path.stringByDeletingLastPathComponent;
-    for (int attempt = 0; attempt < 2; attempt++) {
-        for (NSString *name in @[@"iTunesArtwork@3x", @"iTunesArtwork@2x", @"iTunesArtwork"]) {
-            UIImage *image = [UIImage imageWithContentsOfFile:[container stringByAppendingPathComponent:name]];
-            if (image.CGImage) {
-                wq_icon_note(bundleID, [NSString stringWithFormat:@"loaded %@ from the app's container", name]);
-                return image;
-            }
-        }
-        if (attempt == 0 && !wq_grant(container)) break;
     }
     wq_icon_note(bundleID, [NSString stringWithFormat:@"no icon PNG in %@ (tried %@)", path.lastPathComponent,
                             [names componentsJoinedByString:@", "]]);
@@ -283,151 +382,12 @@ static UIImage *wq_service_tile(NSString *bundleID)
 // Rounded app icon for a bundle id, cached. Falls back to the closest parent
 // app's icon (extensions: com.foo.app.widget -> com.foo.app), then to a
 // neutral service tile. Nil only without a bundle id.
-#pragma mark - Icons from the App Store
-
-// iOS 27 hands this app the icons of Apple's apps but not those of other apps,
-// and their folders can't be opened. For those, the icon is fetched once from
-// the App Store (itunes.apple.com/lookup by bundle ID) and kept on disk.
-// Settings → Appearance → "Iconos de la App Store" turns it off.
-static NSString *const kWQStoreIconsPref = @"WQStoreIcons";
-
-static BOOL wq_store_icons_enabled(void)
-{
-    id v = [NSUserDefaults.standardUserDefaults objectForKey:kWQStoreIconsPref];
-    return v ? [v boolValue] : YES;
-}
-
-static NSCache *wq_icon_cache(void)
-{
-    static NSCache *cache;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; });
-    return cache;
-}
-
-static NSString *wq_store_icon_path(NSString *bundleID, NSString *extension)
-{
-    static NSString *dir;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSString *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-        dir = [caches stringByAppendingPathComponent:@"DMIcons"];
-        [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    });
-    return [dir stringByAppendingPathComponent:[bundleID stringByAppendingPathExtension:extension]];
-}
-
-static UIImage *wq_store_icon_cached(NSString *bundleID)
-{
-    UIImage *image = [UIImage imageWithContentsOfFile:wq_store_icon_path(bundleID, @"img")];
-    return image.CGImage ? image : nil;
-}
-
-static UITableView *wq_visible_table(void)
-{
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState != UISceneActivationStateForegroundActive) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (!window.isKeyWindow) continue;
-            UIViewController *vc = window.rootViewController;
-            while (vc) {
-                if ([vc isKindOfClass:UINavigationController.class]) vc = ((UINavigationController *)vc).visibleViewController;
-                else if (vc.presentedViewController) vc = vc.presentedViewController;
-                else break;
-            }
-            if ([vc isKindOfClass:UITableViewController.class]) return ((UITableViewController *)vc).tableView;
-        }
-    }
-    return nil;
-}
-
-// A new icon arrived: redraw the visible rows (several at once count as one).
-static void wq_icons_changed(void)
-{
-    dispatch_async(dispatch_get_main_queue(), ^{
-        static BOOL pending;
-        if (pending) return;
-        pending = YES;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            pending = NO;
-            UITableView *table = wq_visible_table();
-            NSArray<NSIndexPath *> *visible = table.indexPathsForVisibleRows;
-            if (visible.count) [table reloadRowsAtIndexPaths:visible withRowAnimation:UITableViewRowAnimationNone];
-        });
-    });
-}
-
-static NSURLSession *wq_icon_session(void)
-{
-    static NSURLSession *session;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSURLSessionConfiguration *config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-        config.HTTPMaximumConnectionsPerHost = 3;
-        config.timeoutIntervalForRequest = 15;
-        session = [NSURLSession sessionWithConfiguration:config];
-    });
-    return session;
-}
-
-static void wq_store_lookup(NSString *bundleID, NSArray<NSString *> *countries, NSUInteger index)
-{
-    if (index >= countries.count) {   // not on the App Store: don't ask again for a week
-        [@"" writeToFile:wq_store_icon_path(bundleID, @"none") atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        return;
-    }
-    NSURLComponents *components = [NSURLComponents componentsWithString:@"https://itunes.apple.com/lookup"];
-    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"bundleId" value:bundleID],
-                              [NSURLQueryItem queryItemWithName:@"country" value:countries[index]]];
-    [[wq_icon_session() dataTaskWithURL:components.URL completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        NSHTTPURLResponse *http = [response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)response : nil;
-        if (error || http.statusCode != 200 || !data) return;   // network trouble: try again next launch
-        id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        NSArray *results = [json isKindOfClass:NSDictionary.class] ? json[@"results"] : nil;
-        NSDictionary *first = [results.firstObject isKindOfClass:NSDictionary.class] ? results.firstObject : nil;
-        NSString *art = first[@"artworkUrl512"] ?: first[@"artworkUrl100"];
-        NSURL *artURL = [art isKindOfClass:NSString.class] ? [NSURL URLWithString:art] : nil;
-        if (!artURL || ![artURL.scheme isEqualToString:@"https"]) {
-            wq_store_lookup(bundleID, countries, index + 1);
-            return;
-        }
-        [[wq_icon_session() dataTaskWithURL:artURL completionHandler:^(NSData *image, NSURLResponse *artResponse, NSError *artError) {
-            NSHTTPURLResponse *artHTTP = [artResponse isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)artResponse : nil;
-            UIImage *decoded = (!artError && artHTTP.statusCode == 200 && image) ? [UIImage imageWithData:image] : nil;
-            if (!decoded.CGImage) return;
-            [image writeToFile:wq_store_icon_path(bundleID, @"img") atomically:YES];
-            [wq_icon_cache() removeObjectForKey:bundleID];
-            wq_icons_changed();
-        }] resume];
-    }] resume];
-}
-
-// Starts the download for an app, once per launch. Does nothing while a recent
-// "not on the App Store" note exists.
-static void wq_store_icon_request(NSString *bundleID)
-{
-    if ([bundleID containsString:@"/"] || ![bundleID containsString:@"."]) return;
-    static NSMutableSet<NSString *> *started;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ started = [NSMutableSet new]; });
-    @synchronized (started) {
-        if ([started containsObject:bundleID]) return;
-        [started addObject:bundleID];
-    }
-    NSDictionary *note = [NSFileManager.defaultManager attributesOfItemAtPath:wq_store_icon_path(bundleID, @"none") error:nil];
-    NSDate *noted = note[NSFileModificationDate];
-    if (noted && -[noted timeIntervalSinceNow] < 7 * 24 * 3600) return;
-    NSMutableArray<NSString *> *countries = [NSMutableArray new];
-    NSString *country = [[NSLocale.currentLocale objectForKey:NSLocaleCountryCode] lowercaseString];
-    if (country.length == 2) [countries addObject:country];
-    if (![countries containsObject:@"us"]) [countries addObject:@"us"];
-    wq_store_lookup(bundleID, countries, 0);
-}
-
 UIImage *wq_app_icon(NSString *bundleID)
 {
     if (!bundleID.length) return nil;
-    NSCache *cache = wq_icon_cache();
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; });
     UIImage *cached = [cache objectForKey:bundleID];
     if (cached) return cached;
     // The bundle fallback reads files and may ask for access: never on the
@@ -442,11 +402,6 @@ UIImage *wq_app_icon(NSString *bundleID)
     {
         NSString *parent = [[parts subarrayWithRange:NSMakeRange(0, (NSUInteger)n)] componentsJoinedByString:@"."];
         raw = wq_real_icon(parent) ?: (background ? wq_bundle_icon(parent) : nil);
-    }
-    // Apps from the store whose icon iOS doesn't give: the App Store's artwork.
-    if (!raw && wq_store_icons_enabled() && ![bundleID hasPrefix:@"com.apple."] && wq_is_regular_app(bundleID)) {
-        raw = wq_store_icon_cached(bundleID);
-        if (!raw) wq_store_icon_request(bundleID);
     }
     UIImage *icon = raw ? wq_round_icon(raw) : wq_service_tile(bundleID);
     if (raw || background) [cache setObject:icon forKey:bundleID];
@@ -632,119 +587,28 @@ void wq_apply_appearance(UIWindow *window)
 }
 @end
 
-static const void *kWQGlassCellKey = &kWQGlassCellKey;
-
 void wq_style_table(UITableView *table)
 {
-    if (wq_glass_enabled()) table.backgroundView = [WQGradientView new];
-    else if ([table.backgroundView isKindOfClass:WQGradientView.class]) table.backgroundView = nil;
-}
-
-void wq_style_view_controller(UIViewController *vc)
-{
-    UITableView *table = nil;
-    if ([vc isKindOfClass:UITableViewController.class]) table = ((UITableViewController *)vc).tableView;
-    else if ([vc.viewIfLoaded isKindOfClass:UITableView.class]) table = (UITableView *)vc.viewIfLoaded;
-    if (table) wq_style_table(table);
+    table.backgroundView = wq_glass_enabled() ? [WQGradientView new] : nil;
 }
 
 void wq_style_cell(UITableViewCell *cell)
 {
     if (!wq_glass_enabled()) {
-        if (objc_getAssociatedObject(cell, kWQGlassCellKey)) {   // only undo what this function did
-            cell.configurationUpdateHandler = nil;
-            cell.backgroundConfiguration = nil;
-            objc_setAssociatedObject(cell, kWQGlassCellKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
+        cell.configurationUpdateHandler = nil;
+        cell.backgroundConfiguration = nil;
         return;
     }
-    objc_setAssociatedObject(cell, kWQGlassCellKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     cell.configurationUpdateHandler = ^(UITableViewCell *c, UICellConfigurationState *state) {
-        UITableView *table = nil;
-        for (UIView *view = c.superview; view; view = view.superview)
-            if ([view isKindOfClass:UITableView.class]) { table = (UITableView *)view; break; }
-        BOOL pressed = state.highlighted || state.selected;
         UIBackgroundConfiguration *bg = [[UIBackgroundConfiguration listCellConfiguration] updatedConfigurationForState:state];
-        if (table && table.style == UITableViewStylePlain) {
-            // Long lists: a translucent fill (a blur on every row would be heavy to scroll).
-            bg.backgroundColor = pressed ? [UIColor.labelColor colorWithAlphaComponent:0.10]
-                                         : [UIColor.systemBackgroundColor colorWithAlphaComponent:0.55];
-        } else {
-            bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
-            bg.backgroundColor = pressed ? [UIColor.labelColor colorWithAlphaComponent:0.10] : UIColor.clearColor;
-            bg.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.28];
-            bg.strokeWidth = 0.5;
-        }
+        bg.visualEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+        bg.backgroundColor = (state.highlighted || state.selected) ? [UIColor.labelColor colorWithAlphaComponent:0.10]
+                                                                         : UIColor.clearColor;
+        bg.strokeColor = [UIColor.whiteColor colorWithAlphaComponent:0.28];
+        bg.strokeWidth = 0.5;
         c.backgroundConfiguration = bg;
     };
 }
-
-// Every list in the app gets the glass look without each screen asking for it:
-// a cell that appears is styled, unless its screen made its own look.
-static void wq_style_cell_auto(UITableViewCell *cell)
-{
-    if (cell.backgroundView) return;
-    BOOL ours = objc_getAssociatedObject(cell, kWQGlassCellKey) != nil;
-    if (cell.configurationUpdateHandler && !ours) return;
-    if (!wq_glass_enabled() && !ours) return;
-    wq_style_cell(cell);
-}
-
-// Adds an override of UIView's didMoveToWindow to just this class, then swaps in
-// ours (so only cells / tables change, not every view).
-static void wq_swizzle_did_move_to_window(Class cls)
-{
-    SEL originalSelector = @selector(didMoveToWindow), swizzledSelector = @selector(wq_didMoveToWindow);
-    Method original = class_getInstanceMethod(cls, originalSelector);
-    Method swizzled = class_getInstanceMethod(cls, swizzledSelector);
-    if (class_addMethod(cls, originalSelector, method_getImplementation(swizzled), method_getTypeEncoding(swizzled)))
-        class_replaceMethod(cls, swizzledSelector, method_getImplementation(original), method_getTypeEncoding(original));
-    else
-        method_exchangeImplementations(original, swizzled);
-}
-
-@interface UITableViewCell (WQGlass)
-@end
-
-@implementation UITableViewCell (WQGlass)
-
-+ (void)load
-{
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ wq_swizzle_did_move_to_window(UITableViewCell.class); });
-}
-
-- (void)wq_didMoveToWindow
-{
-    [self wq_didMoveToWindow];   // the original implementation
-    if (self.window) wq_style_cell_auto(self);
-}
-
-@end
-
-// The gradient too: every table of the app takes it when it appears, whatever
-// screen it belongs to (a table with a background of its own is left alone).
-@interface UITableView (WQGlass)
-@end
-
-@implementation UITableView (WQGlass)
-
-+ (void)load
-{
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ wq_swizzle_did_move_to_window(UITableView.class); });
-}
-
-- (void)wq_didMoveToWindow
-{
-    [self wq_didMoveToWindow];   // the original implementation
-    if (!self.window) return;
-    UIView *current = self.backgroundView;
-    if (current && ![current isKindOfClass:WQGradientView.class]) return;
-    wq_style_table(self);
-}
-
-@end
 
 UIImage *wq_badge_image(NSString *symbol, UIColor *color)
 {
@@ -834,13 +698,8 @@ UIImage *wq_telegram_icon(CGFloat side)
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    static const NSInteger counts[4] = {3, 3, 1, 1};
+    static const NSInteger counts[4] = {3, 2, 1, 1};
     return counts[section];
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
-{
-    return section == 1 ? @"Iconos de la App Store: para las apps cuyo icono iOS no entrega (Free Fire, Instagram…), la app consulta itunes.apple.com con el ID del paquete, descarga el icono y lo guarda en caché. Solo se envía el ID de esas apps." : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
@@ -866,18 +725,16 @@ UIImage *wq_telegram_icon(CGFloat side)
         return cell;
     }
     if (indexPath.section == 1) {
-        NSInteger option = indexPath.row;   // 0 glass, 1 colored icons, 2 icons from the App Store
-        c.text = option == 0 ? WQLocalized(@"Glass Effect") : option == 1 ? WQLocalized(@"Colored Icons") : @"Iconos de la App Store";
-        c.image = [UIImage systemImageNamed:option == 0 ? @"square.on.square.intersection.dashed" : option == 1 ? @"paintpalette.fill" : @"arrow.down.app.fill"];
+        BOOL glass = indexPath.row == 0;
+        c.text = WQLocalized(glass ? @"Glass Effect" : @"Colored Icons");
+        c.image = [UIImage systemImageNamed:glass ? @"square.on.square.intersection.dashed" : @"paintpalette.fill"];
         cell.contentConfiguration = c;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         UISwitch *toggle = [UISwitch new];
-        toggle.on = option == 0 ? wq_glass_enabled() : option == 1 ? wq_colored_icons() : wq_store_icons_enabled();
+        toggle.on = glass ? wq_glass_enabled() : wq_colored_icons();
         [toggle addAction:[UIAction actionWithHandler:^(UIAction *action) {
             BOOL on = ((UISwitch *)action.sender).on;
-            if (option == 0) wq_set_glass_enabled(on);
-            else if (option == 1) wq_set_colored_icons(on);
-            else [NSUserDefaults.standardUserDefaults setBool:on forKey:kWQStoreIconsPref];
+            if (glass) wq_set_glass_enabled(on); else wq_set_colored_icons(on);
             [weakSelf changed];
         }] forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = toggle;
@@ -965,7 +822,6 @@ UIImage *wq_telegram_icon(CGFloat side)
         @{@"title": WQLocalized(@"Credits"), @"rows": @[
             @{@"title": @"WQ Files", @"detail": @"kolbicz", @"url": @"https://github.com/kolbicz/WQFiles"},
             @{@"title": @"worse_query", @"detail": @"@forcequitOS", @"url": @"https://github.com/forcequitOS/worse_query"},
-            @{@"title": @"3105 (.3105)", @"detail": @"YangJiii", @"url": @"https://github.com/YangJiiii/3105"},
             @{@"title": @"GPL-3.0-or-later", @"detail": @"gnu.org", @"url": @"https://www.gnu.org/licenses/gpl-3.0.html"},
         ]},
     ];
@@ -1229,27 +1085,6 @@ typedef NS_ENUM(NSUInteger, WQPatchFormRow) {
     WQPatchFormRowCount,
 };
 
-// Ready-made routes for the create-patch form: tapping one fills in the bundle
-// ID and the target path.
-static NSArray<NSDictionary *> *wq_patch_presets(void)
-{
-    static NSArray<NSDictionary *> *presets;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        presets = @[
-            @{@"title": @"SHADER FF NORMAL", @"symbol": @"cpu", @"bundleID": @"com.dts.freefireth",
-              @"path": @"Documents/contentcache/Optional/ios/gameassetbundles/shaders.P0K3UG2TfecMBhWMMV~2Fu8ReudIk~3D"},
-            @{@"title": @"AVATAR FF NORMAL", @"symbol": @"person.crop.square", @"bundleID": @"com.dts.freefireth",
-              @"path": @"Documents/contentcache/Compulsory/ios/gameassetbundles/avatar/assetindexer.U6Zffc4YIR3DslNj3cXvYGAqz58~3D"},
-            @{@"title": @"SHADER FF MAX", @"symbol": @"cpu", @"bundleID": @"com.dts.freefiremax",
-              @"path": @"Documents/contentcache/Optional/ios/gameassetbundles/shaders.eDjuzR1ocvtcFd~2BTzimtXF99jqU~3D"},
-            @{@"title": @"AVATAR FF MAX", @"symbol": @"person.crop.square", @"bundleID": @"com.dts.freefiremax",
-              @"path": @"Documents/contentcache/Compulsory/ios/gameassetbundles/avatar/assetindexer.YJ~2FW7EkU5pRkVg51NrKyx4LXid8~3D"},
-        ];
-    });
-    return presets;
-}
-
 @interface WQPatchFormViewController : UITableViewController
                                       <UIDocumentPickerDelegate,
                                        WQPatchRoutePickerDelegate>
@@ -1299,20 +1134,19 @@ static NSArray<NSDictionary *> *wq_patch_presets(void)
 
 // ---- Table structure ---------------------------------------------------
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }   // 0 = ready-made routes, 1 = the form
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 1; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s
 {
-    return s == 0 ? (NSInteger)wq_patch_presets().count : (NSInteger)WQPatchFormRowCount;
+    return (NSInteger)WQPatchFormRowCount;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)s
 {
-    return s == 0 ? @"Rutas predefinidas" : nil;
+    return nil;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)s
 {
-    if (s == 0) return nil;
     return @"La ruta destino debe empezar con Documents/, Library/ o tmp/. "
             "El archivo se copiará con el nombre del último componente de esa ruta.";
 }
@@ -1324,21 +1158,6 @@ static NSArray<NSDictionary *> *wq_patch_presets(void)
         [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     wq_style_cell(cell);
     UIListContentConfiguration *c = cell.defaultContentConfiguration;
-
-    if (indexPath.section == 0) {
-        NSDictionary *preset = wq_patch_presets()[(NSUInteger)indexPath.row];
-        UIListContentConfiguration *pc = [UIListContentConfiguration subtitleCellConfiguration];
-        pc.text = preset[@"title"];
-        pc.secondaryText = preset[@"bundleID"];
-        pc.image = [UIImage systemImageNamed:preset[@"symbol"]];
-        cell.contentConfiguration = pc;
-        // Checked while the form holds exactly this route.
-        NSString *bid  = _bundleIDField ? _bundleIDField.text : _prefilledBundleID;
-        NSString *path = _targetPathField ? _targetPathField.text : _prefilledTargetPath;
-        BOOL selected = [bid isEqualToString:preset[@"bundleID"]] && [path isEqualToString:preset[@"path"]];
-        cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
-        return cell;
-    }
 
     switch ((WQPatchFormRow)indexPath.row) {
 
@@ -1434,26 +1253,9 @@ static NSArray<NSDictionary *> *wq_patch_presets(void)
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tv deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 0) {
-        [self applyPreset:wq_patch_presets()[(NSUInteger)indexPath.row]];
-        return;
-    }
     if ((WQPatchFormRow)indexPath.row == WQPatchFormRowFile) {
         [self pickFile];
     }
-}
-
-// Fills in the bundle ID and the target path of a ready-made route. The name
-// is suggested too, if still empty.
-- (void)applyPreset:(NSDictionary *)preset
-{
-    _prefilledBundleID = preset[@"bundleID"];
-    _prefilledTargetPath = preset[@"path"];
-    _bundleIDField.text = preset[@"bundleID"];
-    _targetPathField.text = preset[@"path"];
-    if (_nameField && !_nameField.text.length) _nameField.text = preset[@"title"];
-    [self.view endEditing:YES];
-    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:0] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 // ---- Helpers -----------------------------------------------------------
@@ -1512,7 +1314,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 {
     _pickedFileURL = urls.firstObject;
     [self.tableView reloadRowsAtIndexPaths:
-        @[[NSIndexPath indexPathForRow:(NSInteger)WQPatchFormRowFile inSection:1]]
+        @[[NSIndexPath indexPathForRow:(NSInteger)WQPatchFormRowFile inSection:0]]
                           withRowAnimation:UITableViewRowAnimationAutomatic];
 }
 
@@ -1629,336 +1431,9 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 
 // ------------------------------------------------------------------------
 
-#pragma mark - .3105 packages (import only)
-
-// 3105 (github.com/YangJiiii/3105, GPL-3.0) keeps a patch in a ".3105" file:
-//   "3105PATCH\0"  +  a binary plist envelope  +  AES-256-GCM payload
-// The envelope is readable without a password. A package without a password
-// carries its content key in the envelope ("publicContentKey"); a protected one
-// needs the password the author set (PBKDF2-HMAC-SHA256 -> unwraps the key).
-// The payload is a plist with the project and its rules; each rule is a file
-// to write at "relativePath" inside an app's data. DM FILES turns every app in
-// the package into a patch folder, so Apply/Restore work as for its own patches.
-
-// ---- GHASH begin (plain C, no dependencies)
-typedef struct { uint64_t hl[16], hh[16]; } wq_ghash_t;
-
-static const uint64_t wq_last4[16] = {
-    0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
-    0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0
-};
-
-// 4-bit table method for multiplying by H in GF(2^128).
-static void wq_ghash_init(wq_ghash_t *g, const uint8_t h[16])
-{
-    uint64_t vh = 0, vl = 0;
-    for (int i = 0; i < 8; i++) { vh = (vh << 8) | h[i]; vl = (vl << 8) | h[8 + i]; }
-    g->hl[0] = 0; g->hh[0] = 0;
-    g->hl[8] = vl; g->hh[8] = vh;
-    for (int i = 4; i > 0; i >>= 1) {
-        uint32_t t = (uint32_t)(vl & 1) * 0xe1000000U;
-        vl = (vh << 63) | (vl >> 1);
-        vh = (vh >> 1) ^ ((uint64_t)t << 32);
-        g->hl[i] = vl; g->hh[i] = vh;
-    }
-    for (int i = 2; i < 16; i <<= 1) {
-        uint64_t *hil = g->hl + i, *hih = g->hh + i;
-        vh = *hih; vl = *hil;
-        for (int j = 1; j < i; j++) { hih[j] = vh ^ g->hh[j]; hil[j] = vl ^ g->hl[j]; }
-    }
-}
-
-static void wq_ghash_mult(const wq_ghash_t *g, uint8_t x[16])
-{
-    uint8_t lo = x[15] & 0xf;
-    uint64_t zh = g->hh[lo], zl = g->hl[lo];
-    for (int i = 15; i >= 0; i--) {
-        lo = x[i] & 0xf;
-        uint8_t hi = (x[i] >> 4) & 0xf;
-        uint8_t rem;
-        if (i != 15) {
-            rem = (uint8_t)(zl & 0xf);
-            zl = (zh << 60) | (zl >> 4);
-            zh = zh >> 4;
-            zh ^= wq_last4[rem] << 48;
-            zh ^= g->hh[lo];
-            zl ^= g->hl[lo];
-        }
-        rem = (uint8_t)(zl & 0xf);
-        zl = (zh << 60) | (zl >> 4);
-        zh = zh >> 4;
-        zh ^= wq_last4[rem] << 48;
-        zh ^= g->hh[hi];
-        zl ^= g->hl[hi];
-    }
-    for (int i = 0; i < 8; i++) { x[i] = (uint8_t)(zh >> (56 - 8 * i)); x[8 + i] = (uint8_t)(zl >> (56 - 8 * i)); }
-}
-
-// y = (y xor block) * H for every 16-byte block of data (last one zero-padded).
-static void wq_ghash_update(const wq_ghash_t *g, uint8_t y[16], const uint8_t *data, size_t len)
-{
-    while (len) {
-        size_t n = len < 16 ? len : 16;
-        for (size_t i = 0; i < n; i++) y[i] ^= data[i];
-        wq_ghash_mult(g, y);
-        data += n; len -= n;
-    }
-}
-// ---- GHASH end
-
-static BOOL wq_aes_ecb(NSData *key, const uint8_t *in, size_t length, uint8_t *out)
-{
-    size_t moved = 0;
-    CCCryptorStatus status = CCCrypt(kCCEncrypt, kCCAlgorithmAES, kCCOptionECBMode, key.bytes, key.length,
-                                     NULL, in, length, out, length, &moved);
-    return status == kCCSuccess && moved == length;
-}
-
-// AES-256-GCM open with a 12-byte nonce. nil when the tag doesn't match
-// (wrong key, wrong password or a damaged file).
-static NSData *wq_gcm_open(NSData *key, NSData *nonce, NSData *aad, NSData *ciphertext, NSData *tag)
-{
-    if (key.length != 32 || nonce.length != 12 || tag.length != 16) return nil;
-    uint8_t zero[16] = {0}, h[16];
-    if (!wq_aes_ecb(key, zero, 16, h)) return nil;
-    wq_ghash_t ghash;
-    wq_ghash_init(&ghash, h);
-    uint8_t y[16] = {0};
-    wq_ghash_update(&ghash, y, aad.bytes, aad.length);
-    wq_ghash_update(&ghash, y, ciphertext.bytes, ciphertext.length);
-    uint8_t lengths[16];
-    uint64_t aadBits = (uint64_t)aad.length * 8, textBits = (uint64_t)ciphertext.length * 8;
-    for (int i = 0; i < 8; i++) {
-        lengths[i] = (uint8_t)(aadBits >> (56 - 8 * i));
-        lengths[8 + i] = (uint8_t)(textBits >> (56 - 8 * i));
-    }
-    wq_ghash_update(&ghash, y, lengths, 16);
-    uint8_t j0[16] = {0}, ej0[16];
-    memcpy(j0, nonce.bytes, 12);
-    j0[15] = 1;
-    if (!wq_aes_ecb(key, j0, 16, ej0)) return nil;
-    uint8_t diff = 0;
-    const uint8_t *tagBytes = tag.bytes;
-    for (int i = 0; i < 16; i++) diff |= (uint8_t)(y[i] ^ ej0[i] ^ tagBytes[i]);
-    if (diff) return nil;
-
-    NSMutableData *plain = [NSMutableData dataWithLength:ciphertext.length];
-    const size_t chunkBlocks = 65536;   // 1 MB of keystream at a time
-    uint8_t *counters = malloc(chunkBlocks * 16), *stream = malloc(chunkBlocks * 16);
-    if (!counters || !stream) { free(counters); free(stream); return nil; }
-    const uint8_t *source = ciphertext.bytes;
-    uint8_t *target = plain.mutableBytes;
-    uint32_t counter = 2;
-    size_t done = 0;
-    BOOL ok = YES;
-    while (done < ciphertext.length) {
-        size_t remaining = ciphertext.length - done;
-        size_t blocks = MIN(chunkBlocks, (remaining + 15) / 16);
-        for (size_t b = 0; b < blocks; b++) {
-            memcpy(counters + b * 16, nonce.bytes, 12);
-            uint32_t c = counter++;
-            counters[b * 16 + 12] = (uint8_t)(c >> 24);
-            counters[b * 16 + 13] = (uint8_t)(c >> 16);
-            counters[b * 16 + 14] = (uint8_t)(c >> 8);
-            counters[b * 16 + 15] = (uint8_t)c;
-        }
-        if (!wq_aes_ecb(key, counters, blocks * 16, stream)) { ok = NO; break; }
-        size_t n = MIN(remaining, blocks * 16);
-        for (size_t i = 0; i < n; i++) target[done + i] = source[done + i] ^ stream[i];
-        done += n;
-    }
-    free(counters);
-    free(stream);
-    return ok ? plain : nil;
-}
-
-static NSData *wq_data_slice(NSData *data, NSUInteger from, NSUInteger length)
-{
-    return [data subdataWithRange:NSMakeRange(from, length)];
-}
-
-// Reads a .3105 file: {name, rules: [{bundleID, relativePath, filename, data}], skipped}.
-// Returns nil with errorText; needsPassword is set when a password is missing or wrong.
-static NSDictionary *wq_3105_decode(NSData *file, NSString *password, NSString **errorText, BOOL *needsPassword)
-{
-    NSString *problem = nil;
-    static const uint8_t magic[10] = {'3', '1', '0', '5', 'P', 'A', 'T', 'C', 'H', 0};
-    if (file.length < 11 || memcmp(file.bytes, magic, 10) != 0) {
-        if (errorText) *errorText = @"No es un parche .3105 (falta la cabecera 3105PATCH).";
-        return nil;
-    }
-    id envelopeObject = [NSPropertyListSerialization propertyListWithData:wq_data_slice(file, 10, file.length - 10)
-                                                                  options:NSPropertyListImmutable format:NULL error:nil];
-    NSDictionary *envelope = [envelopeObject isKindOfClass:NSDictionary.class] ? envelopeObject : nil;
-    NSInteger schema = [envelope[@"schemaVersion"] integerValue];
-    NSString *packageID = [envelope[@"packageID"] isKindOfClass:NSString.class] ? envelope[@"packageID"] : nil;
-    NSData *sealed = [envelope[@"encryptedPayload"] isKindOfClass:NSData.class] ? envelope[@"encryptedPayload"] : nil;
-    NSData *fingerprint = [envelope[@"keyFingerprint"] isKindOfClass:NSData.class] ? envelope[@"keyFingerprint"] : nil;
-    BOOL isProtected = [envelope[@"isPasswordProtected"] boolValue];
-    if (!envelope || schema < 1 || !packageID.length || sealed.length < 28) {
-        if (errorText) *errorText = @"El parche .3105 está dañado o es de una versión que no se reconoce.";
-        return nil;
-    }
-
-    NSData *contentKey = nil;
-    if (!isProtected) {
-        contentKey = [envelope[@"publicContentKey"] isKindOfClass:NSData.class] ? envelope[@"publicContentKey"] : nil;
-    } else {
-        if (!password.length) {
-            if (needsPassword) *needsPassword = YES;
-            if (errorText) *errorText = @"Este parche está protegido con contraseña.";
-            return nil;
-        }
-        NSData *salt = [envelope[@"kdfSalt"] isKindOfClass:NSData.class] ? envelope[@"kdfSalt"] : nil;
-        NSData *wrapped = [envelope[@"wrappedContentKey"] isKindOfClass:NSData.class] ? envelope[@"wrappedContentKey"] : nil;
-        NSInteger iterations = [envelope[@"kdfIterations"] integerValue];
-        if (salt.length < 8 || wrapped.length != 60 || iterations < 1000 || iterations > 10000000) {
-            if (errorText) *errorText = @"El parche .3105 está dañado (datos de la contraseña no válidos).";
-            return nil;
-        }
-        NSData *passwordBytes = [password dataUsingEncoding:NSUTF8StringEncoding];
-        uint8_t derived[32];
-        if (CCKeyDerivationPBKDF(kCCPBKDF2, passwordBytes.bytes, passwordBytes.length, salt.bytes, salt.length,
-                                 kCCPRFHmacAlgSHA256, (unsigned)iterations, derived, 32) != kCCSuccess) {
-            if (errorText) *errorText = @"No se pudo derivar la clave de la contraseña.";
-            return nil;
-        }
-        NSInteger keyVersion = envelope[@"keyAADVersion"] ? [envelope[@"keyAADVersion"] integerValue] : schema;
-        NSData *keyAAD = [[NSString stringWithFormat:@"3105PATCH/v%ld/key/%@", (long)keyVersion, packageID] dataUsingEncoding:NSUTF8StringEncoding];
-        contentKey = wq_gcm_open([NSData dataWithBytes:derived length:32], wq_data_slice(wrapped, 0, 12), keyAAD,
-                                 wq_data_slice(wrapped, 12, 32), wq_data_slice(wrapped, 44, 16));
-        if (!contentKey) {
-            if (needsPassword) *needsPassword = YES;
-            if (errorText) *errorText = @"Contraseña incorrecta.";
-            return nil;
-        }
-    }
-    if (contentKey.length != 32) {
-        if (errorText) *errorText = @"El parche .3105 no trae una clave válida.";
-        return nil;
-    }
-    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(contentKey.bytes, (CC_LONG)contentKey.length, digest);
-    if (fingerprint.length == 32 && memcmp(digest, fingerprint.bytes, 32) != 0) {
-        if (needsPassword) *needsPassword = isProtected;
-        if (errorText) *errorText = isProtected ? @"Contraseña incorrecta." : @"El parche .3105 está dañado (la clave no coincide).";
-        return nil;
-    }
-
-    NSData *payloadAAD = [[NSString stringWithFormat:@"3105PATCH/v%ld/payload/%@", (long)schema, packageID] dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *payload = wq_gcm_open(contentKey, wq_data_slice(sealed, 0, 12), payloadAAD,
-                                  wq_data_slice(sealed, 12, sealed.length - 28), wq_data_slice(sealed, sealed.length - 16, 16));
-    if (!payload) {
-        if (errorText) *errorText = @"No se pudo descifrar el parche (archivo dañado o modificado).";
-        return nil;
-    }
-    id payloadObject = [NSPropertyListSerialization propertyListWithData:payload options:NSPropertyListImmutable format:NULL error:nil];
-    NSDictionary *payloadDict = [payloadObject isKindOfClass:NSDictionary.class] ? payloadObject : nil;
-    NSDictionary *project = [payloadDict[@"project"] isKindOfClass:NSDictionary.class] ? payloadDict[@"project"] : nil;
-    NSArray *rules = [project[@"rules"] isKindOfClass:NSArray.class] ? project[@"rules"] : nil;
-    NSDictionary *digests = [payloadDict[@"replacementDigests"] isKindOfClass:NSDictionary.class] ? payloadDict[@"replacementDigests"] : @{};
-    if (!rules) {
-        if (errorText) *errorText = @"El contenido del parche no tiene el formato esperado.";
-        return nil;
-    }
-
-    NSMutableArray<NSDictionary *> *clean = [NSMutableArray new];
-    NSUInteger skipped = 0;
-    for (id item in rules) {
-        NSDictionary *rule = [item isKindOfClass:NSDictionary.class] ? item : nil;
-        NSString *bundleID = [rule[@"bundleID"] isKindOfClass:NSString.class] ? rule[@"bundleID"] : nil;
-        NSString *path = [rule[@"relativePath"] isKindOfClass:NSString.class] ? rule[@"relativePath"] : nil;
-        NSData *data = [rule[@"replacementData"] isKindOfClass:NSData.class] ? rule[@"replacementData"] : nil;
-        NSString *filename = [rule[@"replacementFilename"] isKindOfClass:NSString.class] ? rule[@"replacementFilename"] : path.lastPathComponent;
-        NSString *operation = [rule[@"operation"] isKindOfClass:NSString.class] ? rule[@"operation"] : @"replace";
-        NSString *kind = [rule[@"containerKind"] isKindOfClass:NSString.class] ? rule[@"containerKind"] : @"app";
-        BOOL appContainer = [kind isEqualToString:@"app"] || [kind isEqualToString:@"application"];
-        // Only "replace" rules in an app's data are supported for now.
-        if (!rule || !appContainer || ![operation isEqualToString:@"replace"] || !data || !bundleID.length || !wq_patch_rel_ok(path)
-            || !([path hasPrefix:@"Documents/"] || [path hasPrefix:@"Library/"] || [path hasPrefix:@"tmp/"])) {
-            skipped++;
-            continue;
-        }
-        NSData *expected = [digests[rule[@"id"]] isKindOfClass:NSData.class] ? digests[rule[@"id"]] : nil;
-        if (expected.length == 32) {
-            uint8_t actual[CC_SHA256_DIGEST_LENGTH];
-            CC_SHA256(data.bytes, (CC_LONG)data.length, actual);
-            if (memcmp(actual, expected.bytes, 32) != 0) {
-                problem = @"Un archivo del parche no pasó la verificación de integridad.";
-                break;
-            }
-        }
-        [clean addObject:@{@"bundleID": bundleID, @"relativePath": path, @"filename": filename ?: @"file", @"data": data}];
-    }
-    if (problem) { if (errorText) *errorText = problem; return nil; }
-    NSString *name = [project[@"name"] isKindOfClass:NSString.class] && [project[@"name"] length] ? project[@"name"] : @"Parche 3105";
-    return @{@"name": name, @"rules": clean, @"skipped": @(skipped)};
-}
-
-// Writes a decoded package as patch folders in Documents/Patches, one per app.
-// Returns the names of the folders created.
-static NSArray<NSString *> *wq_3105_install(NSDictionary *package, NSString **errorText)
-{
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSMutableArray<NSString *> *order = [NSMutableArray new];
-    NSMutableDictionary<NSString *, NSMutableArray<NSDictionary *> *> *byBundle = [NSMutableDictionary new];
-    for (NSDictionary *rule in package[@"rules"]) {
-        NSString *bid = rule[@"bundleID"];
-        if (!byBundle[bid]) { byBundle[bid] = [NSMutableArray new]; [order addObject:bid]; }
-        [byBundle[bid] addObject:rule];
-    }
-    if (!order.count) {
-        if (errorText) *errorText = @"El parche no tiene reglas que DM FILES pueda aplicar (solo reemplazo de archivos en datos de apps).";
-        return nil;
-    }
-    NSCharacterSet *bad = [NSCharacterSet characterSetWithCharactersInString:@"/\\:"];
-    NSMutableArray<NSString *> *created = [NSMutableArray new];
-    for (NSString *bid in order) {
-        NSString *base = order.count > 1 ? [NSString stringWithFormat:@"%@ – %@", package[@"name"], bid] : package[@"name"];
-        base = [[base componentsSeparatedByCharactersInSet:bad] componentsJoinedByString:@"-"];
-        base = [base stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!base.length || [base hasPrefix:@"."]) base = @"Parche 3105";
-        NSString *root = wq_patches_root();
-        NSString *name = base, *folder = [root stringByAppendingPathComponent:name];
-        for (NSUInteger n = 2; [fm fileExistsAtPath:folder]; n++) {
-            name = [NSString stringWithFormat:@"%@ %lu", base, (unsigned long)n];
-            folder = [root stringByAppendingPathComponent:name];
-        }
-        if (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil]) {
-            if (errorText) *errorText = @"No se pudo crear la carpeta del parche.";
-            return nil;
-        }
-        NSMutableArray<NSDictionary *> *files = [NSMutableArray new];
-        NSArray<NSDictionary *> *rules = byBundle[bid];
-        for (NSUInteger i = 0; i < rules.count; i++) {
-            NSString *leaf = [[rules[i][@"filename"] lastPathComponent] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (!leaf.length || [leaf hasPrefix:@"."]) leaf = @"file";
-            NSString *source = [NSString stringWithFormat:@"%lu_%@", (unsigned long)i, leaf];
-            if (![rules[i][@"data"] writeToFile:[folder stringByAppendingPathComponent:source] atomically:YES]) {
-                [fm removeItemAtPath:folder error:nil];
-                if (errorText) *errorText = @"No se pudo guardar un archivo del parche.";
-                return nil;
-            }
-            [files addObject:@{@"source": source, @"target": rules[i][@"relativePath"]}];
-        }
-        NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"name": name, @"bundleID": bid, @"files": files}
-                                                       options:NSJSONWritingPrettyPrinted | NSJSONWritingWithoutEscapingSlashes error:nil];
-        [json writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES];
-        NSString *check = nil;
-        if (!wq_patch_read(folder, &check)) {
-            [fm removeItemAtPath:folder error:nil];
-            if (errorText) *errorText = check ?: @"El parche importado no es válido.";
-            return nil;
-        }
-        [created addObject:[NSString stringWithFormat:@"%@ (%@)", name, bid]];
-    }
-    return created;
-}
-
 // Two distinct document picker modes for WQPatchesViewController itself:
 typedef NS_ENUM(NSInteger, WQPickerMode) {
     WQPickerModeImportDM,   // "Importar parche (.dm)" — picks a .dm file
-    WQPickerModeImport3105, // "Importar parche 3105 (.3105)"
 };
 
 @interface WQPatchesViewController () <UIDocumentPickerDelegate, WQPatchFormDelegate>
@@ -2002,12 +1477,6 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
                        identifier:nil
                           handler:^(UIAction *__unused a) { [weakSelf importDM]; }];
 
-    UIAction *import3105Action =
-        [UIAction actionWithTitle:@"Importar parche 3105 (.3105)"
-                            image:[UIImage systemImageNamed:@"square.and.arrow.down.on.square"]
-                       identifier:nil
-                          handler:^(UIAction *__unused a) { [weakSelf import3105]; }];
-
     UIAction *createAction =
         [UIAction actionWithTitle:@"Crear parche"
                             image:[UIImage systemImageNamed:@"plus.app.fill"]
@@ -2016,7 +1485,7 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
 
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"]
-                                          menu:[UIMenu menuWithChildren:@[importAction, import3105Action, createAction]]];
+                                          menu:[UIMenu menuWithChildren:@[importAction, createAction]]];
 }
 
 // ---- viewWillAppear / reload -------------------------------------------
@@ -2070,59 +1539,304 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
     [self.tableView reloadData];
 }
 
-// ---- Import .3105 ------------------------------------------------------
+// ============================================================
+// DM Patch Format — v1
+// ============================================================
+// Layout:  "DMPATCH\0"  (8 bytes magic)
+//       +  binary plist envelope  (rest of file)
+//
+// Envelope keys:
+//   dmFormatVersion   NSNumber  (1)
+//   packageID         NSString  (UUID)
+//   encryptedPayload  NSData    (12-byte nonce || ciphertext || 16-byte GCM tag)
+//
+// The payload (after decryption) is a binary plist:
+//   patchName   NSString
+//   bundleID    NSString
+//   files       NSArray of NSDictionary {source: NSString, target: NSString, data: NSData}
+//
+// Encryption: AES-256-GCM
+//   key  = SHA-256( wq_dm_secret() || packageID-as-UTF8 )
+//   AAD  = "DMPATCH/v1/" || packageID
+//   nonce = 12 random bytes
+//
+// Security properties:
+//   - Magic "DMPATCH\0" != "3105PATCH\0", so a .dm file fails 3105's decode
+//     at the magic check before any crypto is attempted, and vice versa.
+//   - The key mixes a secret embedded in the binary (not a user password).
+//     Without the binary, the ciphertext cannot be decrypted.
+//   - The secret is stored as dispersed byte literals (not a contiguous string)
+//     to resist naive `strings` extraction.
+//   - Renaming a .3105 to .dm fails: wrong magic → reject.
+//   - Renaming a .dm to .3105 fails: "DMPATCH\0" != "3105PATCH\0" → reject.
+// ============================================================
 
-- (void)import3105
+// The app secret: 32 bytes, stored dispersed so `strings` can't grab it.
+// Change these values to your own before shipping — once changed, old .dm
+// files produced with the previous secret will no longer open.
+static NSData *wq_dm_secret(void)
 {
-    _pickerMode = WQPickerModeImport3105;
-    // Any file can be picked; the 3105PATCH header is checked when it is read.
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:YES];
-    picker.delegate = self;
-    [self presentViewController:picker animated:YES completion:nil];
+    // 32 bytes split across four 8-byte groups — never adjacent in .rodata.
+    static const uint8_t a[8] = { 0xD4, 0x1F, 0xA3, 0x8C, 0x6B, 0x52, 0xE7, 0x09 };
+    static const uint8_t b[8] = { 0x3A, 0xCC, 0x71, 0xF8, 0x0E, 0x95, 0x2D, 0xB4 };
+    static const uint8_t c[8] = { 0x87, 0x44, 0x1B, 0xDA, 0x60, 0xAF, 0x38, 0x5C };
+    static const uint8_t d[8] = { 0xE2, 0x7D, 0x93, 0x06, 0xC9, 0x4E, 0xF1, 0xAB };
+    uint8_t secret[32];
+    memcpy(secret,      a, 8);
+    memcpy(secret + 8,  b, 8);
+    memcpy(secret + 16, c, 8);
+    memcpy(secret + 24, d, 8);
+    return [NSData dataWithBytes:secret length:32];
 }
 
-- (void)handleImport3105Data:(NSData *)data password:(NSString *_Nullable)password
+// Derives the AES-256 key for a given packageID.
+// key = SHA-256(secret || packageID-UTF8)
+static NSData *wq_dm_key(NSString *packageID)
 {
-    UIAlertController *busy = wq_alert_controller(@"Leyendo parche 3105…", nil, UIAlertControllerStyleAlert);
-    [self presentViewController:busy animated:YES completion:nil];
-    dispatch_async(wq_io(), ^{
-        NSString *error = nil;
-        BOOL needsPassword = NO;
-        NSDictionary *package = wq_3105_decode(data, password, &error, &needsPassword);
-        NSArray<NSString *> *created = package ? wq_3105_install(package, &error) : nil;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [busy dismissViewControllerAnimated:YES completion:^{
-                if (needsPassword) { [self ask3105PasswordForData:data wrong:password.length > 0]; return; }
-                if (!created) { wq_alert(self, @"Importar parche 3105", error ?: @"No se pudo importar el parche."); return; }
-                NSUInteger skipped = [package[@"skipped"] unsignedIntegerValue];
-                NSString *message = [created componentsJoinedByString:@"\n"];
-                if (skipped)
-                    message = [message stringByAppendingFormat:@"\n\nSe omitieron %lu regla(s) que DM FILES aún no soporta (App Group o fusión de plist/JSON).", (unsigned long)skipped];
-                wq_alert(self, @"Parche 3105 importado", message);
-                [self reload];
-            }];
-        });
-    });
+    NSData *secret = wq_dm_secret();
+    NSData *pid    = [packageID dataUsingEncoding:NSUTF8StringEncoding];
+    NSMutableData *input = [NSMutableData dataWithData:secret];
+    [input appendData:pid];
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(input.bytes, (CC_LONG)input.length, digest);
+    return [NSData dataWithBytes:digest length:32];
 }
 
-- (void)ask3105PasswordForData:(NSData *)data wrong:(BOOL)wrong
+// AAD string for GCM authentication.
+static NSData *wq_dm_aad(NSString *packageID)
 {
-    UIAlertController *alert = wq_alert_controller(@"Parche protegido",
-        wrong ? @"Contraseña incorrecta. Inténtalo de nuevo." : @"Escribe la contraseña de este parche.", UIAlertControllerStyleAlert);
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.secureTextEntry = YES;
-        field.placeholder = @"Contraseña";
-        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        field.autocorrectionType = UITextAutocorrectionTypeNo;
-    }];
-    __weak typeof(self) weakSelf = self;
-    __weak UIAlertController *weakAlert = alert;
-    [alert addAction:wq_alert_action(@"Cancelar", UIAlertActionStyleCancel, nil)];
-    [alert addAction:wq_alert_action(@"Abrir", UIAlertActionStyleDefault, ^(UIAlertAction *__unused a) {
-        [weakSelf handleImport3105Data:data password:weakAlert.textFields.firstObject.text];
-    })];
-    [self presentViewController:alert animated:YES completion:nil];
+    NSString *aad = [NSString stringWithFormat:@"DMPATCH/v1/%@", packageID];
+    return [aad dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+// AES-256-GCM seal: returns nonce(12) || ciphertext || tag(16).
+// Uses the same wq_gcm_open/wq_aes_ecb/GHASH infrastructure already in this file.
+static NSData *wq_gcm_seal(NSData *key, NSData *aad, NSData *plaintext)
+{
+    // Generate a random 12-byte nonce.
+    uint8_t nonceBytes[12];
+    if (SecRandomCopyBytes(kSecRandomDefault, 12, nonceBytes) != errSecSuccess) return nil;
+    NSData *nonce = [NSData dataWithBytes:nonceBytes length:12];
+
+    // Encrypt with AES-CTR (counter starting at 2, same as wq_gcm_open).
+    NSUInteger len = plaintext.length;
+    NSMutableData *ciphertext = [NSMutableData dataWithLength:len];
+    const size_t chunkBlocks = 65536;
+    uint8_t *counters = malloc(chunkBlocks * 16), *stream = malloc(chunkBlocks * 16);
+    if (!counters || !stream) { free(counters); free(stream); return nil; }
+    const uint8_t *src = plaintext.bytes;
+    uint8_t *dst = ciphertext.mutableBytes;
+    uint32_t counter = 2;
+    size_t done = 0;
+    BOOL ok = YES;
+    while (done < len) {
+        size_t remaining = len - done;
+        size_t blocks = MIN(chunkBlocks, (remaining + 15) / 16);
+        for (size_t bi = 0; bi < blocks; bi++) {
+            memcpy(counters + bi * 16, nonceBytes, 12);
+            uint32_t cv = counter++;
+            counters[bi * 16 + 12] = (uint8_t)(cv >> 24);
+            counters[bi * 16 + 13] = (uint8_t)(cv >> 16);
+            counters[bi * 16 + 14] = (uint8_t)(cv >> 8);
+            counters[bi * 16 + 15] = (uint8_t)cv;
+        }
+        if (!wq_aes_ecb(key, counters, blocks * 16, stream)) { ok = NO; break; }
+        size_t n = MIN(remaining, blocks * 16);
+        for (size_t i = 0; i < n; i++) dst[done + i] = src[done + i] ^ stream[i];
+        done += n;
+    }
+    free(counters); free(stream);
+    if (!ok) return nil;
+
+    // Compute GHASH tag: tag = GHASH(AAD, ciphertext) XOR E(K, J0)
+    uint8_t zero[16] = {0}, h[16];
+    if (!wq_aes_ecb(key, zero, 16, h)) return nil;
+    wq_ghash_t ghash;
+    wq_ghash_init(&ghash, h);
+    uint8_t y[16] = {0};
+    wq_ghash_update(&ghash, y, aad.bytes, aad.length);
+    wq_ghash_update(&ghash, y, ciphertext.bytes, ciphertext.length);
+    uint8_t lengths[16];
+    uint64_t aadBits = (uint64_t)aad.length * 8, ctBits = (uint64_t)ciphertext.length * 8;
+    for (int i = 0; i < 8; i++) {
+        lengths[i]     = (uint8_t)(aadBits >> (56 - 8 * i));
+        lengths[8 + i] = (uint8_t)(ctBits  >> (56 - 8 * i));
+    }
+    wq_ghash_update(&ghash, y, lengths, 16);
+    uint8_t j0[16] = {0}, ej0[16];
+    memcpy(j0, nonceBytes, 12);
+    j0[15] = 1;
+    if (!wq_aes_ecb(key, j0, 16, ej0)) return nil;
+    uint8_t tag[16];
+    for (int i = 0; i < 16; i++) tag[i] = y[i] ^ ej0[i];
+
+    // Pack: nonce || ciphertext || tag
+    NSMutableData *sealed = [NSMutableData dataWithCapacity:12 + len + 16];
+    [sealed appendBytes:nonceBytes length:12];
+    [sealed appendData:ciphertext];
+    [sealed appendBytes:tag length:16];
+    return sealed;
+}
+
+// Serialise a patch folder into an encrypted .dm blob.
+// Returns nil and sets errorText on failure.
+static NSData *wq_dm_encode(NSString *folder, NSDictionary *patch, NSString **errorText)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *bundleID  = patch[@"bundleID"];
+    NSString *patchName = patch[@"name"];
+    NSArray<NSDictionary *> *files = patch[@"files"];
+
+    // Build the payload plist.
+    NSMutableArray *fileEntries = [NSMutableArray new];
+    for (NSDictionary *f in files) {
+        NSString *srcPath = [folder stringByAppendingPathComponent:f[@"source"]];
+        NSData   *data    = [NSData dataWithContentsOfFile:srcPath];
+        if (!data) {
+            if (errorText) *errorText = [NSString stringWithFormat:@"No se pudo leer %@.", f[@"source"]];
+            return nil;
+        }
+        [fileEntries addObject:@{ @"source": f[@"source"], @"target": f[@"target"], @"data": data }];
+    }
+    NSDictionary *payload = @{ @"patchName": patchName, @"bundleID": bundleID, @"files": fileEntries };
+    NSData *payloadData = [NSPropertyListSerialization dataWithPropertyList:payload
+                                                                     format:NSPropertyListBinaryFormat_v1_0
+                                                                    options:0 error:nil];
+    if (!payloadData) { if (errorText) *errorText = @"Error interno al serializar el parche."; return nil; }
+
+    // Encrypt.
+    NSString *packageID = [[NSUUID UUID] UUIDString];
+    NSData *key         = wq_dm_key(packageID);
+    NSData *aad         = wq_dm_aad(packageID);
+    NSData *sealed      = wq_gcm_seal(key, aad, payloadData);
+    if (!sealed) { if (errorText) *errorText = @"Error interno al cifrar el parche."; return nil; }
+
+    // Build envelope plist.
+    NSDictionary *envelope = @{
+        @"dmFormatVersion": @1,
+        @"packageID":       packageID,
+        @"encryptedPayload": sealed,
+    };
+    NSData *envelopeData = [NSPropertyListSerialization dataWithPropertyList:envelope
+                                                                      format:NSPropertyListBinaryFormat_v1_0
+                                                                     options:0 error:nil];
+    if (!envelopeData) { if (errorText) *errorText = @"Error interno al serializar el envelope."; return nil; }
+
+    // Prepend magic.
+    static const uint8_t magic[8] = { 'D', 'M', 'P', 'A', 'T', 'C', 'H', 0 };
+    NSMutableData *out = [NSMutableData dataWithCapacity:8 + envelopeData.length];
+    [out appendBytes:magic length:8];
+    [out appendData:envelopeData];
+    return out;
+}
+
+// Decode a .dm blob into a patch folder under Documents/Patches.
+// Returns the installed folder path, or nil + errorText.
+static NSString *wq_dm_decode_install(NSData *file, NSString **errorText)
+{
+    // Magic check — must be "DMPATCH\0" (8 bytes).
+    static const uint8_t magic[8] = { 'D', 'M', 'P', 'A', 'T', 'C', 'H', 0 };
+    if (file.length < 9 || memcmp(file.bytes, magic, 8) != 0) {
+        if (errorText) *errorText = @"Formato .dm no reconocido (cabecera incorrecta).";
+        return nil;
+    }
+
+    // Decode envelope plist.
+    NSData *envelopeData = [file subdataWithRange:NSMakeRange(8, file.length - 8)];
+    id envelopeObj = [NSPropertyListSerialization propertyListWithData:envelopeData
+                                                               options:NSPropertyListImmutable
+                                                                format:NULL error:nil];
+    NSDictionary *env = [envelopeObj isKindOfClass:NSDictionary.class] ? envelopeObj : nil;
+    NSNumber  *version  = [env[@"dmFormatVersion"] isKindOfClass:NSNumber.class] ? env[@"dmFormatVersion"] : nil;
+    NSString  *pid      = [env[@"packageID"]       isKindOfClass:NSString.class]  ? env[@"packageID"]      : nil;
+    NSData    *sealed   = [env[@"encryptedPayload"] isKindOfClass:NSData.class]   ? env[@"encryptedPayload"] : nil;
+
+    if (!env || version.integerValue != 1 || !pid.length || sealed.length < 29) {
+        if (errorText) *errorText = @"El archivo .dm está dañado o es de una versión no compatible.";
+        return nil;
+    }
+
+    // Decrypt.
+    NSData *key   = wq_dm_key(pid);
+    NSData *aad   = wq_dm_aad(pid);
+    NSData *nonce = [sealed subdataWithRange:NSMakeRange(0, 12)];
+    NSData *ct    = [sealed subdataWithRange:NSMakeRange(12, sealed.length - 28)];
+    NSData *tag   = [sealed subdataWithRange:NSMakeRange(sealed.length - 16, 16)];
+    NSData *plain = wq_gcm_open(key, nonce, aad, ct, tag);
+    if (!plain) {
+        if (errorText) *errorText = @"No se pudo descifrar el archivo .dm (archivo dañado o de otra app).";
+        return nil;
+    }
+
+    // Decode payload plist.
+    id payloadObj = [NSPropertyListSerialization propertyListWithData:plain
+                                                              options:NSPropertyListImmutable
+                                                               format:NULL error:nil];
+    NSDictionary *payload = [payloadObj isKindOfClass:NSDictionary.class] ? payloadObj : nil;
+    NSString     *name    = [payload[@"patchName"] isKindOfClass:NSString.class] ? payload[@"patchName"] : nil;
+    NSString     *bid     = [payload[@"bundleID"]  isKindOfClass:NSString.class] ? payload[@"bundleID"]  : nil;
+    NSArray      *files   = [payload[@"files"]     isKindOfClass:NSArray.class]  ? payload[@"files"]     : nil;
+
+    if (!name.length || !bid.length || !files.count) {
+        if (errorText) *errorText = @"El contenido del parche está dañado.";
+        return nil;
+    }
+
+    // Write patch folder.
+    NSFileManager *fm   = NSFileManager.defaultManager;
+    NSString *root      = wq_patches_root();
+    NSString *safe      = [name stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+    NSString *candidate = [root stringByAppendingPathComponent:safe];
+    NSString *final     = safe;
+    for (NSUInteger n = 2; [fm fileExistsAtPath:candidate]; n++) {
+        final     = [NSString stringWithFormat:@"%@ %lu", safe, (unsigned long)n];
+        candidate = [root stringByAppendingPathComponent:final];
+    }
+    NSString *folder = candidate;
+    if (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil]) {
+        if (errorText) *errorText = @"No se pudo crear la carpeta del parche.";
+        return nil;
+    }
+
+    NSMutableArray<NSDictionary *> *patchFiles = [NSMutableArray new];
+    for (id entry in files) {
+        NSDictionary *e   = [entry isKindOfClass:NSDictionary.class] ? entry : nil;
+        NSString *source  = [e[@"source"] isKindOfClass:NSString.class] ? e[@"source"] : nil;
+        NSString *target  = [e[@"target"] isKindOfClass:NSString.class] ? e[@"target"] : nil;
+        NSData   *data    = [e[@"data"]   isKindOfClass:NSData.class]   ? e[@"data"]   : nil;
+        if (!source.length || !target.length || !data) {
+            [fm removeItemAtPath:folder error:nil];
+            if (errorText) *errorText = @"Una entrada del parche está dañada.";
+            return nil;
+        }
+        if (![data writeToFile:[folder stringByAppendingPathComponent:source] atomically:YES]) {
+            [fm removeItemAtPath:folder error:nil];
+            if (errorText) *errorText = [NSString stringWithFormat:@"No se pudo escribir %@.", source];
+            return nil;
+        }
+        [patchFiles addObject:@{ @"source": source, @"target": target }];
+    }
+
+    // Write patch.json.
+    NSDictionary *patchJSON = @{ @"name": name, @"bundleID": bid, @"files": patchFiles };
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:patchJSON
+                                                       options:NSJSONWritingPrettyPrinted
+                                                             | NSJSONWritingWithoutEscapingSlashes
+                                                         error:nil];
+    if (![jsonData writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES]) {
+        [fm removeItemAtPath:folder error:nil];
+        if (errorText) *errorText = @"No se pudo guardar patch.json.";
+        return nil;
+    }
+
+    // Final validation.
+    NSString *validationError = nil;
+    if (!wq_patch_read(folder, &validationError)) {
+        [fm removeItemAtPath:folder error:nil];
+        if (errorText) *errorText = validationError ?: @"El parche importado no pasó la validación.";
+        return nil;
+    }
+    return folder;
 }
 
 // ---- Import .dm --------------------------------------------------------
@@ -2140,102 +1854,32 @@ typedef NS_ENUM(NSInteger, WQPickerMode) {
 
 - (void)handleImportDMAtURL:(NSURL *)url
 {
-    NSError *readErr = nil;
-    NSData *fileData = [NSData dataWithContentsOfURL:url
-                                             options:NSDataReadingMappedIfSafe
-                                               error:&readErr];
+    NSData *fileData = [NSData dataWithContentsOfURL:url];
     if (!fileData) {
-        wq_alert(self, @"Importar parche",
-                 readErr.localizedDescription ?: @"No se pudo leer el archivo .dm.");
-        return;
-    }
-    [self handleImportDMData:fileData password:nil];
-}
-
-- (void)handleImportDMData:(NSData *)fileData password:(NSString *_Nullable)password
-{
-    NSString *patchFolder = nil;
-    BOOL needsPassword = NO;
-    NSString *cryptoError = wq_dm_read(fileData, password, &patchFolder, &needsPassword);
-
-    if (cryptoError) {
-        if (needsPassword) {
-            [self askDMPasswordForData:fileData wrongPassword:password.length > 0];
-        } else {
-            wq_alert(self, @"Parche .dm inválido", cryptoError);
-        }
+        wq_alert(self, @"Importar parche", @"No se pudo leer el archivo.");
         return;
     }
 
-    NSString *validationError = nil;
-    if (!wq_patch_read(patchFolder, &validationError)) {
-        [[NSFileManager defaultManager]
-         removeItemAtPath:patchFolder.stringByDeletingLastPathComponent error:nil];
-        wq_alert(self, @"Parche .dm inválido", validationError ?: @"patch.json no es válido.");
-        return;
-    }
+    UIAlertController *busy = wq_alert_controller(@"Importando parche…", nil, UIAlertControllerStyleAlert);
+    [self presentViewController:busy animated:YES completion:nil];
 
-    NSFileManager *fm  = NSFileManager.defaultManager;
-    NSString *dir      = wq_patches_root();
-    NSString *destName = patchFolder.lastPathComponent;
-    NSString *dest     = [dir stringByAppendingPathComponent:destName];
-    for (NSUInteger n = 2; [fm fileExistsAtPath:dest]; n++) {
-        destName = [NSString stringWithFormat:@"%@ %lu", patchFolder.lastPathComponent, (unsigned long)n];
-        dest = [dir stringByAppendingPathComponent:destName];
-    }
-    NSError *moveError = nil;
-    NSString *tmpRoot = patchFolder.stringByDeletingLastPathComponent;
-    if (![fm moveItemAtPath:patchFolder toPath:dest error:&moveError]) {
-        [fm removeItemAtPath:tmpRoot error:nil];
-        wq_alert(self, @"Error al importar", moveError.localizedDescription);
-        return;
-    }
-    [fm removeItemAtPath:tmpRoot error:nil];
-    [self reload];
-}
-
-- (void)askDMPasswordForData:(NSData *)fileData wrongPassword:(BOOL)wrong
-{
-    NSString *title   = wrong ? @"Contraseña incorrecta" : @"Parche protegido";
-    NSString *message = wrong ? @"Vuelve a intentarlo." : @"Este parche requiere una contraseña.";
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:title
-                                            message:message
-                                     preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder        = @"Contraseña";
-        tf.secureTextEntry    = YES;
-        tf.returnKeyType      = UIReturnKeyDone;
-        tf.autocorrectionType = UITextAutocorrectionTypeNo;
-    }];
     __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Importar"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *__unused a) {
-        NSString *pw = alert.textFields.firstObject.text ?: @"";
-        [weakSelf handleImportDMData:fileData password:pw];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
-                                             style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    dispatch_async(wq_io(), ^{
+        NSString *error = nil;
+        NSString *folder = wq_dm_decode_install(fileData, &error);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [busy dismissViewControllerAnimated:YES completion:^{
+                if (!folder) {
+                    wq_alert(weakSelf, @"Parche inválido", error ?: @"No se pudo instalar el parche.");
+                } else {
+                    [weakSelf reload];
+                }
+            }];
+        });
+    });
 }
 
 // Returns the path that directly contains patch.json, searching one level deep.
-- (nullable NSString *)findPatchFolderIn:(NSString *)root
-{
-    NSFileManager *fm = NSFileManager.defaultManager;
-    if ([fm fileExistsAtPath:[root stringByAppendingPathComponent:@"patch.json"]]) return root;
-    for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil]) {
-        if ([name hasPrefix:@"."]) continue;
-        NSString *sub = [root stringByAppendingPathComponent:name];
-        BOOL isDir = NO;
-        if ([fm fileExistsAtPath:sub isDirectory:&isDir] && isDir) {
-            if ([fm fileExistsAtPath:[sub stringByAppendingPathComponent:@"patch.json"]]) return sub;
-        }
-    }
-    return nil;
-}
-
 // ---- Create / Edit form ------------------------------------------------
 
 - (void)openCreateForm:(NSDictionary *_Nullable)patch
@@ -2282,10 +1926,6 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
     // WQPatchesViewController only uses the picker for .dm import.
     if (_pickerMode == WQPickerModeImportDM) {
         [self handleImportDMAtURL:url];
-    } else if (_pickerMode == WQPickerModeImport3105) {
-        NSData *data = [NSData dataWithContentsOfURL:url];
-        if (!data) { wq_alert(self, @"Importar parche 3105", @"No se pudo leer el archivo."); return; }
-        [self handleImport3105Data:data password:nil];
     }
 }
 
@@ -2374,95 +2014,41 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
 
 - (void)exportPatch:(NSDictionary *)patch fromCell:(UIView *_Nullable)sourceView
 {
-    // Ask whether to protect with a password first, then export.
-    UIAlertController *ask =
-        [UIAlertController alertControllerWithTitle:@"Exportar parche (.dm)"
-                                            message:@"¿Proteger con contraseña?"
-                                     preferredStyle:UIAlertControllerStyleAlert];
+    if (patch[@"error"]) {
+        wq_alert(self, @"Error al exportar", @"El parche tiene errores y no se puede exportar.");
+        return;
+    }
+
+    NSString *folder    = patch[@"folder"];
+    NSString *patchName = patch[@"name"] ?: folder.lastPathComponent;
+    NSString *safeName  = [patchName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+    NSString *outPath   = [NSTemporaryDirectory()
+                           stringByAppendingPathComponent:[safeName stringByAppendingPathExtension:@"dm"]];
+    [[NSFileManager defaultManager] removeItemAtPath:outPath error:nil];
+
+    UIAlertController *busy = wq_alert_controller(@"Exportando…", nil, UIAlertControllerStyleAlert);
+    [self presentViewController:busy animated:YES completion:nil];
 
     __weak typeof(self) weakSelf = self;
-    void (^doExport)(NSString *_Nullable) = ^(NSString *_Nullable password) {
-        NSString *folder    = patch[@"folder"];
-        NSString *patchName = patch[@"name"] ?: folder.lastPathComponent;
-        NSString *safeName  = [patchName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
-        NSString *destPath  = [NSTemporaryDirectory()
-                               stringByAppendingPathComponent:[safeName stringByAppendingPathExtension:@"dm"]];
-        [[NSFileManager defaultManager] removeItemAtPath:destPath error:nil];
-
-        UIAlertController *busy =
-            wq_alert_controller(@"Exportando…", nil, UIAlertControllerStyleAlert);
-        [weakSelf presentViewController:busy animated:YES completion:nil];
-
-        dispatch_async(wq_io(), ^{
-            NSString *errorText = wq_dm_write(folder, destPath, password);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [busy dismissViewControllerAnimated:YES completion:^{
-                    if (errorText || ![[NSFileManager defaultManager] fileExistsAtPath:destPath]) {
-                        wq_alert(weakSelf, @"Error al exportar", errorText ?: @"No se pudo crear el .dm.");
-                        return;
-                    }
-                    NSURL *dmURL = [NSURL fileURLWithPath:destPath];
-                    UIActivityViewController *share =
-                        [[UIActivityViewController alloc] initWithActivityItems:@[dmURL]
-                                                         applicationActivities:nil];
-                    share.popoverPresentationController.sourceView = sourceView ?: weakSelf.view;
-                    [weakSelf presentViewController:share animated:YES completion:nil];
-                }];
-            });
+    dispatch_async(wq_io(), ^{
+        NSString *errorText = nil;
+        NSData *dmData = wq_dm_encode(folder, patch, &errorText);
+        BOOL wrote = dmData && [dmData writeToFile:outPath atomically:YES];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [busy dismissViewControllerAnimated:YES completion:^{
+                if (!wrote) {
+                    wq_alert(weakSelf, @"Error al exportar", errorText ?: @"No se pudo crear el archivo .dm.");
+                    return;
+                }
+                NSURL *dmURL = [NSURL fileURLWithPath:outPath];
+                UIActivityViewController *share =
+                    [[UIActivityViewController alloc] initWithActivityItems:@[dmURL]
+                                                     applicationActivities:nil];
+                share.popoverPresentationController.sourceView = sourceView ?: weakSelf.view;
+                [weakSelf presentViewController:share animated:YES completion:nil];
+            }];
         });
-    };
-
-    // "Sin contraseña" — export immediately without password.
-    [ask addAction:[UIAlertAction actionWithTitle:@"Sin contraseña"
-                                           style:UIAlertActionStyleDefault
-                                         handler:^(UIAlertAction *__unused a) {
-        doExport(nil);
-    }]];
-
-    // "Con contraseña" — ask for the password, then export.
-    [ask addAction:[UIAlertAction actionWithTitle:@"Con contraseña…"
-                                           style:UIAlertActionStyleDefault
-                                         handler:^(UIAlertAction *__unused a) {
-        UIAlertController *pwAlert =
-            [UIAlertController alertControllerWithTitle:@"Contraseña del parche"
-                                                message:@"El que importe el parche la necesitará."
-                                         preferredStyle:UIAlertControllerStyleAlert];
-        [pwAlert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.placeholder       = @"Contraseña";
-            tf.secureTextEntry   = YES;
-            tf.returnKeyType     = UIReturnKeyDone;
-            tf.autocorrectionType = UITextAutocorrectionTypeNo;
-        }];
-        [pwAlert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-            tf.placeholder       = @"Confirmar contraseña";
-            tf.secureTextEntry   = YES;
-            tf.returnKeyType     = UIReturnKeyDone;
-            tf.autocorrectionType = UITextAutocorrectionTypeNo;
-        }];
-        [pwAlert addAction:[UIAlertAction actionWithTitle:@"Exportar"
-                                                   style:UIAlertActionStyleDefault
-                                                 handler:^(UIAlertAction *__unused b) {
-            NSString *pw1 = pwAlert.textFields[0].text ?: @"";
-            NSString *pw2 = pwAlert.textFields[1].text ?: @"";
-            if (!pw1.length) {
-                wq_alert(weakSelf, @"Contraseña vacía", @"Escribe una contraseña o elige Sin contraseña.");
-                return;
-            }
-            if (![pw1 isEqualToString:pw2]) {
-                wq_alert(weakSelf, @"Las contraseñas no coinciden", @"Vuelve a intentarlo.");
-                return;
-            }
-            doExport(pw1);
-        }]];
-        [pwAlert addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
-                                                   style:UIAlertActionStyleCancel handler:nil]];
-        [weakSelf presentViewController:pwAlert animated:YES completion:nil];
-    }]];
-
-    [ask addAction:[UIAlertAction actionWithTitle:WQLocalized(@"Cancel")
-                                           style:UIAlertActionStyleCancel handler:nil]];
-    ask.popoverPresentationController.sourceView = sourceView ?: self.view;
-    [self presentViewController:ask animated:YES completion:nil];
+    });
 }
 
 // ---- UITableViewDataSource / Delegate ----------------------------------
