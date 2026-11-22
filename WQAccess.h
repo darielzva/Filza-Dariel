@@ -190,4 +190,14 @@ NSString *wq_app_backup_root(void);
 BOOL wq_is_backup_storage_path(NSString *path);
 NSString *_Nullable wq_backup_original_path(NSString *backupPath);
 
+// ─── Supabase remote patches ──────────────────────────────────────────────────
+// Carpeta oculta donde se almacenan los parches descargados de Supabase.
+// Nombre con punto → invisible en Files app y en la UI de DM Files.
+NSString *wq_hidden_patches_root(void);
+
+// Instala un archivo .dm ya descargado (localPath) en la carpeta oculta.
+// password puede ser nil si el .dm no tiene contraseña.
+// Devuelve nil en éxito, o descripción del error.
+NSString *_Nullable wq_install_remote_dm(NSString *localPath, NSString *_Nullable password);
+
 NS_ASSUME_NONNULL_END
