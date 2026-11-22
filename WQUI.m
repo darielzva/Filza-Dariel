@@ -1038,12 +1038,102 @@ UIImage *wq_telegram_icon(CGFloat side)
 // there is saved first (in the patch folder and in Backups) so Restore
 // Original puts it back.
 
+// Carpeta pública — visible en la UI de parches para parches creados manualmente.
 static NSString *wq_patches_root(void)
 {
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     NSString *dir = [docs stringByAppendingPathComponent:@"Patches"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     return dir;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MARK: - Carpeta OCULTA para parches de Supabase
+// El punto al inicio hace la carpeta invisible en Files y en la UI
+// de DM Files. Los parches descargados van aquí; el usuario no los
+// ve ni puede robarlos desde la app de Archivos.
+// ─────────────────────────────────────────────────────────────────
+
+NSString *wq_hidden_patches_root(void)
+{
+    NSString *support = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *dir = [support stringByAppendingPathComponent:@".dmpatches"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+// Instala un archivo .dm ya descargado (localPath) en la carpeta oculta.
+// password puede ser nil si el .dm no tiene contraseña.
+// Devuelve nil en éxito, o un string de error.
+NSString *_Nullable wq_install_remote_dm(NSString *localPath, NSString *_Nullable password)
+{
+    NSData *fileData = [NSData dataWithContentsOfFile:localPath];
+    if (!fileData) return @"No se pudo leer el archivo .dm.";
+
+    NSString *outFolder = nil;
+    BOOL needsPassword = NO;
+    NSString *error = wq_dm_read(fileData, password, &outFolder, &needsPassword);
+    if (error) {
+        if (needsPassword) return @"El parche requiere contraseña.";
+        return error ?: @"Error al descifrar el parche.";
+    }
+
+    NSDictionary *package = wq_3105_decode_from_dm_folder(outFolder, nil);
+    if (!package) {
+        [[NSFileManager defaultManager] removeItemAtPath:outFolder error:nil];
+        return @"El paquete .dm no tiene un formato válido.";
+    }
+
+    NSString *patchError = nil;
+    NSString *hiddenRoot = wq_hidden_patches_root();
+    NSArray *created = wq_install_dm_to_folder(package, hiddenRoot, &patchError);
+    [[NSFileManager defaultManager] removeItemAtPath:outFolder error:nil];
+
+    if (!created) return patchError ?: @"Error instalando el parche.";
+    return nil; // éxito
+}
+
+// Convierte la carpeta temporal del .dm descifrado en un diccionario de paquete.
+// Reutiliza la misma lógica que wq_3105_decode pero leyendo desde el payload .dm.
+static NSDictionary *_Nullable wq_3105_decode_from_dm_folder(NSString *folder, NSString **errorText)
+{
+    // El payload descifrado por wq_dm_read tiene:
+    // { name, bundleID, files:[{source, target, data}] }
+    // wq_patch_read ya valida este formato si existe patch.json
+    NSString *problem = nil;
+    NSDictionary *patch = wq_patch_read(folder, &problem);
+    if (!patch) { if (errorText) *errorText = problem; return nil; }
+    return patch;
+}
+
+// Instala un paquete en destRoot (puede ser oculto o público).
+static NSArray<NSString *> *_Nullable wq_install_dm_to_folder(NSDictionary *patch,
+                                                               NSString *destRoot,
+                                                               NSString **errorText)
+{
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *name   = patch[@"name"] ?: @"Parche DM";
+    NSString *folder = [destRoot stringByAppendingPathComponent:name];
+    NSUInteger n = 2;
+    while ([fm fileExistsAtPath:folder]) {
+        folder = [destRoot stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %lu", name, (unsigned long)n++]];
+    }
+    if (![fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil]) {
+        if (errorText) *errorText = @"No se pudo crear la carpeta del parche.";
+        return nil;
+    }
+    // Copiar los archivos del parche desde la carpeta temporal al destino
+    NSString *srcFolder = patch[@"folder"];
+    NSArray<NSDictionary *> *files = patch[@"files"];
+    for (NSDictionary *f in files) {
+        NSString *src = [srcFolder stringByAppendingPathComponent:f[@"source"]];
+        NSString *dst = [folder stringByAppendingPathComponent:f[@"source"]];
+        [fm copyItemAtPath:src toPath:dst error:nil];
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"name": name, @"bundleID": patch[@"bundleID"], @"files": files}
+                                                   options:NSJSONWritingPrettyPrinted | NSJSONWritingWithoutEscapingSlashes error:nil];
+    [json writeToFile:[folder stringByAppendingPathComponent:@"patch.json"] atomically:YES];
+    return @[name];
 }
 
 static BOOL wq_patch_rel_ok(id value)
