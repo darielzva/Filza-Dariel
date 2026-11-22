@@ -2,9 +2,6 @@
 #import "DMSupabaseService.h"
 #import <CommonCrypto/CommonDigest.h>
 
-// Forward-declared from WQUI.m — the caller's existing install function.
-extern void wq_install_remote_dm(NSURL *patchURL);
-
 // MARK: - DMRemotePatch
 
 @implementation DMRemotePatch
@@ -225,6 +222,7 @@ extern void wq_install_remote_dm(NSURL *patchURL);
     dispatch_queue_t serial = dispatch_queue_create("com.dmfiles.patch_download", DISPATCH_QUEUE_SERIAL);
 
     __block void (^downloadNext)(void);
+    __block __weak void (^weakDownloadNext)(void);
     downloadNext = ^{
         if (currentIndex >= total) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(nil); });
@@ -238,15 +236,17 @@ extern void wq_install_remote_dm(NSURL *patchURL);
             dispatch_async(dispatch_get_main_queue(), ^{ onEach(idx, total, patch.displayName); });
         }
 
-        [self downloadPatch:patch progress:nil completion:^(NSError *error) {
+        [self downloadPatch:patch progress:nil completion:^(NSError *__unused error) {
             // Continue on failure (same behaviour as Swift version)
             double overall = (double)idx / (double)total;
             if (onOverall) {
                 dispatch_async(dispatch_get_main_queue(), ^{ onOverall(overall); });
             }
-            dispatch_async(serial, downloadNext);
+            void (^next)(void) = weakDownloadNext;
+            if (next) dispatch_async(serial, next);
         }];
     };
+    weakDownloadNext = downloadNext;
 
     dispatch_async(serial, downloadNext);
 }

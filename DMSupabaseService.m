@@ -128,7 +128,7 @@ static NSDate *_Nullable DMParseISO8601(NSString *string) {
     [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
 
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req
-                                  completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                                  completionHandler:^(NSData *data, NSURLResponse *__unused response, NSError *error) {
         if (error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, [NSError errorWithDomain:DMSupabaseErrorDomain
@@ -226,7 +226,7 @@ static NSDate *_Nullable DMParseISO8601(NSString *string) {
     [req setValue:@"application/json" forHTTPHeaderField:@"Accept"];
 
     [[[NSURLSession sharedSession] dataTaskWithRequest:req
-       completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+       completionHandler:^(NSData *data, NSURLResponse *__unused response, NSError *error) {
         if (!data || error) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
             return;
@@ -327,7 +327,7 @@ static NSDate *_Nullable DMParseISO8601(NSString *string) {
     NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!str) return;
     NSURLSessionWebSocketMessage *wsMsg = [[NSURLSessionWebSocketMessage alloc] initWithString:str];
-    [task sendMessage:wsMsg completionHandler:^(NSError *err) {}];
+    [task sendMessage:wsMsg completionHandler:^(NSError *__unused err) {}];
 }
 
 - (void)listenOnTask:(NSURLSessionWebSocketTask *)task
@@ -382,7 +382,7 @@ static NSDate *_Nullable DMParseISO8601(NSString *string) {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.heartbeatTimer = [NSTimer scheduledTimerWithTimeInterval:25.0
                                                               repeats:YES
-                                                                block:^(NSTimer *timer) {
+                                                                block:^(NSTimer *__unused timer) {
             NSDictionary *hb = @{@"topic": @"phoenix", @"event": @"heartbeat",
                                  @"payload": @{}, @"ref": @"hb"};
             NSData *data = [NSJSONSerialization dataWithJSONObject:hb options:0 error:nil];
@@ -390,8 +390,8 @@ static NSDate *_Nullable DMParseISO8601(NSString *string) {
             NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             if (!str) return;
             NSURLSessionWebSocketMessage *wsMsg = [[NSURLSessionWebSocketMessage alloc] initWithString:str];
-            [self.keyWSTask  sendMessage:wsMsg completionHandler:^(NSError *e) {}];
-            [self.maintWSTask sendMessage:wsMsg completionHandler:^(NSError *e) {}];
+            [self.keyWSTask  sendMessage:wsMsg completionHandler:^(NSError *__unused e) {}];
+            [self.maintWSTask sendMessage:wsMsg completionHandler:^(NSError *__unused e) {}];
         }];
     });
 }

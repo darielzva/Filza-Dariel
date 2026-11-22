@@ -148,7 +148,7 @@ void dm_start(UIWindow *window, void (^makeMainUI)(UIWindow *window)) {
         __block DMSplashViewController *splash = [[DMSplashViewController alloc] initWithCompletion:^{
             [UIView animateWithDuration:0.3 animations:^{
                 window.rootViewController.view.alpha = 0.0f;
-            } completion:^(BOOL done) {
+            } completion:^(BOOL __unused done) {
                 showMainUI();
             }];
             splash = nil;
@@ -162,11 +162,11 @@ void dm_start(UIWindow *window, void (^makeMainUI)(UIWindow *window)) {
     if (savedKey && savedKey.length > 0) {
         // Key guardada → verificar en background, mostrar splash de inmediato
         showSplash();
-        [[DMSupabaseService shared] verifyKey:savedKey completion:^(DMSupabaseKey *key, NSError *error) {
+        [[DMSupabaseService shared] verifyKey:savedKey completion:^(DMSupabaseKey *__unused key, NSError *error) {
             if (error) {
                 // Key inválida → borrar y pedir login desde el splash activo
                 [DMLoginViewController clearSavedKey];
-                DMLoginViewController *login = [[DMLoginViewController alloc] initWithCompletion:^(DMSupabaseKey *validKey) {
+                DMLoginViewController *login = [[DMLoginViewController alloc] initWithCompletion:^(DMSupabaseKey *__unused validKey) {
                     [window.rootViewController dismissViewControllerAnimated:YES completion:nil];
                 }];
                 login.modalPresentationStyle = UIModalPresentationOverFullScreen;
@@ -177,7 +177,7 @@ void dm_start(UIWindow *window, void (^makeMainUI)(UIWindow *window)) {
     } else {
         // Sin key → Login primero, después Splash
         DMLoginViewController *login = [[DMLoginViewController alloc]
-            initWithCompletion:^(DMSupabaseKey *key) {
+            initWithCompletion:^(DMSupabaseKey *__unused key) {
                 showSplash();
             }];
         window.rootViewController = login;

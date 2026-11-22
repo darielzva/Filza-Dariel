@@ -28,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 // MARK: - DMPatchesStore
 
+typedef void (^DMVoidCompletion)(NSError *_Nullable error);
 typedef void (^DMPatchesListCompletion)(NSArray<DMRemotePatch *> *_Nullable patches, NSError *_Nullable error);
 typedef void (^DMPatchDownloadCompletion)(NSError *_Nullable error);
 typedef void (^DMPatchProgressBlock)(double progress);

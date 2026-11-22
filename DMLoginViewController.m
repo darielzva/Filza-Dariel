@@ -29,7 +29,7 @@ static BOOL DMKeychainSave(NSString *service, NSString *account, NSString *value
     return status == errSecSuccess;
 }
 
-static nullable NSString *DMKeychainRead(NSString *service, NSString *account) {
+static NSString * _Nullable DMKeychainRead(NSString *service, NSString *account) {
     NSDictionary *query = @{
         (__bridge id)kSecClass:            (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService:      service,

@@ -79,7 +79,7 @@ static NSString *const kAppName = @"DM Files";
 - (void)layoutSublayers {
     [super layoutSublayers];
     // Re-centre particles when bounds change
-    [self.sublayers enumerateObjectsUsingBlock:^(CALayer *dot, NSUInteger idx, BOOL *stop) {
+    [self.sublayers enumerateObjectsUsingBlock:^(CALayer *dot, NSUInteger idx, BOOL *__unused stop) {
         CGFloat radius = 80.0f;
         double angleRad = (double)idx / (double)self->_particleCount * M_PI * 2.0;
         dot.position = CGPointMake(
@@ -426,7 +426,7 @@ static const CGFloat kLogoContainerSize = 220.0f;
         } onOverall:^(double overall) {
             double p = 0.05 + overall * 0.90;
             [self updateProgress:p step:@"INSTALANDO..."];
-        } completion:^(NSError *err) {
+        } completion:^(NSError *__unused err) {
             [self updateProgress:1.0 step:@"SISTEMA LISTO"];
             [self finishAfterDelay];
         }];
@@ -438,7 +438,7 @@ static const CGFloat kLogoContainerSize = 220.0f;
                    dispatch_get_main_queue(), ^{
         [UIView animateWithDuration:0.35 animations:^{
             self.view.alpha = 0.0f;
-        } completion:^(BOOL done) {
+        } completion:^(BOOL __unused done) {
             if (self.completion) self.completion();
         }];
     });
