@@ -60,14 +60,8 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 xcrun --sdk iphoneos clang -fobjc-arc -fmodules -fmodules-cache-path="$OUT/ModuleCache" -arch arm64 \
     -miphoneos-version-min="$MINIMUM_IOS_VERSION" \
     -isysroot "$SDK" -Wall -Wextra -Werror -O2 \
-    -framework UIKit -framework Foundation -framework Security \
-    -framework UniformTypeIdentifiers -framework AVKit -framework AVFoundation \
-    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m \
-    WQSharing.m WQApps.m WQCache.m WQPlistEditor.m WQHexViewer.m WQSQLiteViewer.m \
-    WQSQLiteSave.m WQHealth.m WQTrash.m WQArchive.m WQSyntax.m WQMediaStream.m \
-    DMSupabaseService.m DMPatchesStore.m DMSplashViewController.m \
-    DMLoginViewController.m DMIntegration.m \
-    main.m -lsqlite3 -lz -o "$APP/WQFiles"
+    -framework UIKit -framework Foundation -framework Security -framework UniformTypeIdentifiers \
+    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m WQUI.m WQSharing.m WQApps.m WQCache.m WQPlistEditor.m WQHexViewer.m WQSQLiteViewer.m WQSQLiteSave.m WQHealth.m WQTrash.m WQArchive.m WQSyntax.m WQMediaStream.m main.m -lsqlite3 -lz -o "$APP/WQFiles"
 cp Info.plist "$APP/Info.plist"
 cp icons/AppIcon*@*.png "$APP/"
 for lproj in "$ROOT"/*.lproj; do
