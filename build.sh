@@ -10,14 +10,10 @@ cd "$ROOT"
 MINIMUM_IOS_VERSION=26.0
 FINAL_IPA=${WQFILES_FINAL_IPA:-WQFiles.ipa}
 
-# ── Ensure WQPatchLoader import is present in main.m ─────────────────────────
-# Guards against accidental truncation of main.m (GitHub web editor / API).
-# sed is idempotent: if the import already exists the file is unchanged.
-if ! grep -q '#import "WQPatchLoader.h"' main.m; then
-    echo "patching main.m: adding missing #import WQPatchLoader.h"
-    sed -i '' 's|#import "WQDir.h"|#import "WQDir.h"\n#import "WQPatchLoader.h"|' main.m 2>/dev/null || \
-    sed -i 's|#import "WQDir.h"|#import "WQDir.h"\n#import "WQPatchLoader.h"|' main.m
-fi
+# ── Restore main.m if truncated, and apply DarielModz patches ────────────────
+# restore_main.py detects if main.m is truncated (<50KB or missing int main())
+# and re-fetches from upstream, then injects WQPatchLoader import + call.
+python3 "$ROOT/scripts/restore_main.py"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Publish only after the host regression suite passes.
