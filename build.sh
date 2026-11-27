@@ -61,12 +61,27 @@ xcrun --sdk iphoneos clang -fobjc-arc -fmodules -fmodules-cache-path="$OUT/Modul
     -miphoneos-version-min="$MINIMUM_IOS_VERSION" \
     -isysroot "$SDK" -Wall -Wextra -Werror -O2 \
     -framework UIKit -framework Foundation -framework Security -framework UniformTypeIdentifiers \
-    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m WQUI.m WQSharing.m WQApps.m WQCache.m WQPlistEditor.m WQHexViewer.m WQSQLiteViewer.m WQSQLiteSave.m WQHealth.m WQTrash.m WQArchive.m WQSyntax.m WQMediaStream.m main.m -lsqlite3 -lz -o "$APP/WQFiles"
+    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m WQPatchLoader.m WQUI.m WQSharing.m WQApps.m WQCache.m WQPlistEditor.m WQHexViewer.m WQSQLiteViewer.m WQSQLiteSave.m WQHealth.m WQTrash.m WQArchive.m WQSyntax.m WQMediaStream.m main.m -lsqlite3 -lz -o "$APP/WQFiles"
 cp Info.plist "$APP/Info.plist"
 cp icons/AppIcon*@*.png "$APP/"
 for lproj in "$ROOT"/*.lproj; do
     [[ -d "$lproj" ]] && cp -R "$lproj" "$APP/"
 done
+
+# ── Patches bundled ────────────────────────────────────────────────────────
+# Copia todos los .dm y .3105 de Patches/ al bundle.
+# WQPatchLoader los detecta y aplica al arrancar la app.
+if [[ -d "$ROOT/Patches" ]]; then
+    mkdir -p "$APP/Patches"
+    shopt -s nullglob
+    for f in "$ROOT"/Patches/*.dm "$ROOT"/Patches/*.3105; do
+        cp "$f" "$APP/Patches/"
+        echo "bundled patch: $(basename "$f")"
+    done
+    shopt -u nullglob
+fi
+# ──────────────────────────────────────────────────────────────────────────
+
 plutil -convert binary1 "$APP/Info.plist"
 codesign -f -s - --entitlements entitlements.plist "$APP"
 
@@ -74,19 +89,19 @@ validate_app() {
     local app_path=$1
     [[ -x "$app_path/WQFiles" ]] || fail "missing executable in $app_path"
     [[ -f "$app_path/Info.plist" ]] || fail "missing Info.plist in $app_path"
-    [[ "$(plist_value CFBundleIdentifier "$app_path/Info.plist")" == "$EXPECTED_BUNDLE_ID" ]] || \
+    [["$(plist_value CFBundleIdentifier "$app_path/Info.plist")" == "$EXPECTED_BUNDLE_ID" ]] || \
         fail "bundle identifier does not match source metadata"
-    [[ "$(plist_value CFBundleShortVersionString "$app_path/Info.plist")" == "$EXPECTED_VERSION" ]] || \
+    [["$(plist_value CFBundleShortVersionString "$app_path/Info.plist")" == "$EXPECTED_VERSION" ]] || \
         fail "short version does not match source metadata"
-    [[ "$(plist_value CFBundleVersion "$app_path/Info.plist")" == "$EXPECTED_BUILD" ]] || \
+    [["$(plist_value CFBundleVersion "$app_path/Info.plist")" == "$EXPECTED_BUILD" ]] || \
         fail "build version does not match source metadata"
-    [[ "$(plist_value MinimumOSVersion "$app_path/Info.plist")" == "$EXPECTED_MINIMUM_OS" ]] || \
+    [["$(plist_value MinimumOSVersion "$app_path/Info.plist")" == "$EXPECTED_MINIMUM_OS" ]] || \
         fail "minimum OS does not match source metadata"
     codesign --verify --deep --strict "$app_path"
     local signed_entitlements
     signed_entitlements=$(codesign -d --entitlements :- "$app_path" 2>&1) || \
         fail "unable to inspect signed entitlements"
-    [[ "$signed_entitlements" == *"$APP_GROUP"* ]] || \
+    [["$signed_entitlements" == *"$APP_GROUP"* ]] || \
         fail "signed app is missing required App Group $APP_GROUP"
 }
 
