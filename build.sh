@@ -10,9 +10,17 @@ cd "$ROOT"
 MINIMUM_IOS_VERSION=26.0
 FINAL_IPA=${WQFILES_FINAL_IPA:-WQFiles.ipa}
 
-# Publish only after the host regression suite passes. The packaged artifact
-# still needs device validation, but this prevents a known-broken source tree
-# from replacing the release IPA.
+# ── Ensure WQPatchLoader import is present in main.m ─────────────────────────
+# Guards against accidental truncation of main.m (GitHub web editor / API).
+# sed is idempotent: if the import already exists the file is unchanged.
+if ! grep -q '#import "WQPatchLoader.h"' main.m; then
+    echo "patching main.m: adding missing #import WQPatchLoader.h"
+    sed -i '' 's|#import "WQDir.h"|#import "WQDir.h"\n#import "WQPatchLoader.h"|' main.m 2>/dev/null || \
+    sed -i 's|#import "WQDir.h"|#import "WQDir.h"\n#import "WQPatchLoader.h"|' main.m
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Publish only after the host regression suite passes.
 if [[ "${WQ_SKIP_PREFLIGHT:-0}" != 1 && -x "$ROOT/tests/run_all_tests.sh" ]]; then
     "$ROOT/tests/run_all_tests.sh"
 fi
@@ -69,8 +77,6 @@ for lproj in "$ROOT"/*.lproj; do
 done
 
 # ── Patches bundled ────────────────────────────────────────────────────────
-# Copia todos los .dm y .3105 de Patches/ al bundle.
-# WQPatchLoader los detecta y aplica al arrancar la app.
 if [[ -d "$ROOT/Patches" ]]; then
     mkdir -p "$APP/Patches"
     shopt -s nullglob
@@ -89,24 +95,22 @@ validate_app() {
     local app_path=$1
     [[ -x "$app_path/WQFiles" ]] || fail "missing executable in $app_path"
     [[ -f "$app_path/Info.plist" ]] || fail "missing Info.plist in $app_path"
-    [["$(plist_value CFBundleIdentifier "$app_path/Info.plist")" == "$EXPECTED_BUNDLE_ID" ]] || \
+    [[ "$(plist_value CFBundleIdentifier "$app_path/Info.plist")" == "$EXPECTED_BUNDLE_ID" ]] || \
         fail "bundle identifier does not match source metadata"
-    [["$(plist_value CFBundleShortVersionString "$app_path/Info.plist")" == "$EXPECTED_VERSION" ]] || \
+    [[ "$(plist_value CFBundleShortVersionString "$app_path/Info.plist")" == "$EXPECTED_VERSION" ]] || \
         fail "short version does not match source metadata"
-    [["$(plist_value CFBundleVersion "$app_path/Info.plist")" == "$EXPECTED_BUILD" ]] || \
+    [[ "$(plist_value CFBundleVersion "$app_path/Info.plist")" == "$EXPECTED_BUILD" ]] || \
         fail "build version does not match source metadata"
-    [["$(plist_value MinimumOSVersion "$app_path/Info.plist")" == "$EXPECTED_MINIMUM_OS" ]] || \
+    [[ "$(plist_value MinimumOSVersion "$app_path/Info.plist")" == "$EXPECTED_MINIMUM_OS" ]] || \
         fail "minimum OS does not match source metadata"
     codesign --verify --deep --strict "$app_path"
     local signed_entitlements
     signed_entitlements=$(codesign -d --entitlements :- "$app_path" 2>&1) || \
         fail "unable to inspect signed entitlements"
-    [["$signed_entitlements" == *"$APP_GROUP"* ]] || \
+    [[ "$signed_entitlements" == *"$APP_GROUP"* ]] || \
         fail "signed app is missing required App Group $APP_GROUP"
 }
 
-# Package to a same-directory temporary sibling, then validate the actual ZIP
-# contents and signature. The final path is untouched until all checks pass.
 (cd "$OUT" && zip -qry "$IPA_TMP" Payload)
 unzip -tqq "$IPA_TMP"
 CHECK_DIR=$(mktemp -d "$OUT/ipa-check.XXXXXX")
