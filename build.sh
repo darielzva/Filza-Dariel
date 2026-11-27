@@ -61,8 +61,8 @@ xcrun --sdk iphoneos clang -fobjc-arc -fmodules -fmodules-cache-path="$OUT/Modul
     -miphoneos-version-min="$MINIMUM_IOS_VERSION" \
     -isysroot "$SDK" -Wall -Wextra -Werror -O2 \
     -framework UIKit -framework Foundation -framework Security \
-    -framework UniformTypeIdentifiers \
-    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m WQUI.m \
+    -framework UniformTypeIdentifiers -framework AVKit -framework AVFoundation \
+    WQCore.m WQAccess.m WQLocalization.m WQLaunchServices.m WQPatchCrypto.m \
     WQSharing.m WQApps.m WQCache.m WQPlistEditor.m WQHexViewer.m WQSQLiteViewer.m \
     WQSQLiteSave.m WQHealth.m WQTrash.m WQArchive.m WQSyntax.m WQMediaStream.m \
     DMSupabaseService.m DMPatchesStore.m DMSplashViewController.m \
