@@ -43,9 +43,6 @@
 #import "WQArchive.h"
 #import "WQSyntax.h"
 #import "WQMediaStream.h"
-// ── DM FILES: Login + Splash ──────────────────────────────────────────────
-#import "DMIntegration.h"
-// ─────────────────────────────────────────────────────────────────────────
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <sys/mount.h>
@@ -4252,21 +4249,10 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options
 {
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    window.rootViewController = [[WQNavigationController alloc] initWithRootViewController:[WQRootViewController new]];
+    wq_apply_appearance(window);
+    [window makeKeyAndVisible];
     self.window = window;
-
-    // ── DM FILES: Gate de licencia ─────────────────────────────────────────
-    dm_start(window, ^(UIWindow *w) {
-        // Este bloque es exactamente lo que el SceneDelegate original hacía:
-        // crear la ventana principal con WQRootViewController.
-        wq_apply_appearance(w);
-        UINavigationController *nav = [[WQNavigationController alloc]
-                                        initWithRootViewController:[WQRootViewController new]];
-        [UIView transitionWithView:w duration:0.35
-                           options:UIViewAnimationOptionTransitionCrossDissolve
-                        animations:^{ w.rootViewController = nav; }
-                        completion:nil];
-    });
-    // ──────────────────────────────────────────────────────────────────────
 }
 
 @end
