@@ -4253,6 +4253,10 @@ static UIImage *wq_badge(NSString *symbol, UIColor *color)
     wq_apply_appearance(window);
     [window makeKeyAndVisible];
     self.window = window;
+
+    // ── Parches bundled ──────────────────────────────
+    [[WQPatchLoader shared] applyBundledPatchesIfNeeded];
+    // ────────────────────────────────────────────────
 }
 
 @end
