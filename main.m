@@ -19,3 +19,4 @@
 #import "WQSharing.h"
 #import "WQDir.h"
 #import "WQPatchLoader.h"
+#import "WQApps.h"
